@@ -6,7 +6,8 @@ import {
   Wifi,
   Menu,
   IndianRupee,
-  ShieldCheck
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
 import { getMonthName } from '../utils/formatters';
 
@@ -144,9 +145,17 @@ export function Header({
             </div>
           </div>
 
-          {/* Right: LAN & DB badge */}
-          <div className="hidden sm:flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-medium shadow-xs">
+          {/* Right: Security Mode & Network Badge */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <div
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 bg-amber-50 border border-amber-200/80 text-amber-800 rounded-full text-[10px] sm:text-xs font-semibold shadow-xs"
+              title="Secure Read-Only View: Password required to add, edit, or settle expenses."
+            >
+              <Lock className="w-3 h-3 text-amber-600 flex-shrink-0" />
+              <span>Protected View</span>
+            </div>
+
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-medium shadow-xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               <Wifi className="w-3.5 h-3.5" />
               <span className="hidden md:inline">Port {systemInfo?.port || 3002} (LAN)</span>

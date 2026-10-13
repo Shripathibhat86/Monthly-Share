@@ -16,23 +16,35 @@ router.get('/', async (req, res) => {
 // POST verify PIN
 router.post('/verify-pin', async (req, res) => {
   const { memberId, pin } = req.body;
-  if (!memberId || !pin) {
-    return res.status(400).json({ error: 'memberId and pin are required' });
+  if (!pin || !pin.toString().trim()) {
+    return res.status(400).json({ error: 'Password / PIN is required' });
   }
 
+  const cleanPin = pin.toString().trim();
+
   try {
-    const result = await query('SELECT id, pin, name FROM members WHERE id = ?', [memberId]);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Member not found' });
-    }
+    if (memberId && memberId !== 'any' && Number(memberId) > 0) {
+      const result = await query('SELECT id, pin, name FROM members WHERE id = ?', [memberId]);
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Member not found' });
+      }
 
-    const member = result.rows[0];
-    const isMatch = member.pin.trim() === pin.toString().trim();
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid PIN entered' });
-    }
+      const member = result.rows[0];
+      const isMatch = member.pin.trim() === cleanPin;
+      if (!isMatch) {
+        return res.status(401).json({ error: 'Incorrect authorization PIN / password' });
+      }
 
-    res.json({ success: true, memberName: member.name });
+      return res.json({ success: true, memberId: member.id, memberName: member.name });
+    } else {
+      // Check if matches any member
+      const result = await query('SELECT id, pin, name FROM members');
+      const matched = result.rows.find((m) => m.pin.trim() === cleanPin);
+      if (!matched) {
+        return res.status(401).json({ error: 'Incorrect authorization PIN / password' });
+      }
+      return res.json({ success: true, memberId: matched.id, memberName: matched.name });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -48,12 +60,13 @@ router.put('/:id', async (req, res) => {
   }
 
   try {
-    // Check PIN authorization if provided or verify current pin
-    if (pin) {
-      const checkPin = await query('SELECT pin FROM members WHERE id = ?', [id]);
-      if (checkPin.rows.length > 0 && checkPin.rows[0].pin.trim() !== pin.toString().trim()) {
-        return res.status(401).json({ error: 'Incorrect PIN authorization' });
-      }
+    // Require PIN authorization to update profile
+    if (!pin) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to update member profile' });
+    }
+    const checkPin = await query('SELECT pin FROM members WHERE id = ?', [id]);
+    if (checkPin.rows.length === 0 || checkPin.rows[0].pin.trim() !== pin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
     await query(
@@ -73,7 +86,11 @@ router.put('/:id/pin', async (req, res) => {
   const { oldPin, newPin } = req.body;
 
   if (!newPin || newPin.toString().trim().length < 4) {
-    return res.status(400).json({ error: 'New PIN must be at least 4 digits' });
+    return res.status(400).json({ error: 'New password / PIN must be at least 4 characters' });
+  }
+
+  if (!oldPin) {
+    return res.status(400).json({ error: 'Current password / PIN is required' });
   }
 
   try {
@@ -82,8 +99,8 @@ router.put('/:id/pin', async (req, res) => {
       return res.status(404).json({ error: 'Member not found' });
     }
 
-    if (oldPin && memberRes.rows[0].pin.trim() !== oldPin.toString().trim()) {
-      return res.status(401).json({ error: 'Current PIN is incorrect' });
+    if (memberRes.rows[0].pin.trim() !== oldPin.toString().trim()) {
+      return res.status(401).json({ error: 'Current password / PIN is incorrect' });
     }
 
     await query('UPDATE members SET pin = ? WHERE id = ?', [newPin.toString().trim(), id]);

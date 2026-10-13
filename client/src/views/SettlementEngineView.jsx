@@ -56,29 +56,37 @@ export function SettlementEngineView({
     e.preventDefault();
     if (!settlingTransfer) return;
 
-    setIsSubmitting(true);
-    try {
-      await api.completeSettlement({
-        month: selectedMonth,
-        payer_member_id: settlingTransfer.payer_id,
-        receiver_member_id: settlingTransfer.receiver_id,
-        amount: settlingTransfer.amount,
-        payment_date: paymentDate,
-        reference_note: referenceNote
-      });
+    onRequestPin({
+      title: 'Authorize Settlement Transfer',
+      message: `Please enter member PIN / password to record payment of ₹${settlingTransfer.amount} from ${settlingTransfer.payer_name} to ${settlingTransfer.receiver_name}.`,
+      onConfirm: async ({ memberId, pin }) => {
+        setIsSubmitting(true);
+        try {
+          await api.completeSettlement({
+            month: selectedMonth,
+            payer_member_id: settlingTransfer.payer_id,
+            receiver_member_id: settlingTransfer.receiver_id,
+            amount: settlingTransfer.amount,
+            payment_date: paymentDate,
+            reference_note: referenceNote,
+            authorizing_member_id: memberId,
+            pin
+          });
 
-      showToast({
-        type: 'success',
-        message: `Marked ₹${settlingTransfer.amount} transfer from ${settlingTransfer.payer_name} to ${settlingTransfer.receiver_name} as paid!`
-      });
-      setSettlingTransfer(null);
-      setViewingTransferDetails(null);
-      onRefresh();
-    } catch (err) {
-      showToast({ type: 'error', message: err.message || 'Failed to complete settlement' });
-    } finally {
-      setIsSubmitting(false);
-    }
+          showToast({
+            type: 'success',
+            message: `Marked ₹${settlingTransfer.amount} transfer from ${settlingTransfer.payer_name} to ${settlingTransfer.receiver_name} as paid!`
+          });
+          setSettlingTransfer(null);
+          setViewingTransferDetails(null);
+          onRefresh();
+        } catch (err) {
+          showToast({ type: 'error', message: err.message || 'Failed to complete settlement' });
+        } finally {
+          setIsSubmitting(false);
+        }
+      }
+    });
   };
 
   // Handle Reverse Settlement

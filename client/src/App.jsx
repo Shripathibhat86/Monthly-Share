@@ -97,10 +97,19 @@ export function App() {
     setSelectedMonth(newMonth);
   };
 
-  // Handle Edit Expense
+  // Handle Edit Expense (PIN / Password protected)
   const handleEditExpense = (expense) => {
-    setEditingExpense(expense);
-    setActiveTab('add-expense');
+    requestPin({
+      title: 'Edit Expense Authorization',
+      message: `Please enter member PIN / password to edit "${expense.title}".`,
+      onConfirm: ({ memberId, pin }) => {
+        setEditingExpense({
+          ...expense,
+          authData: { memberId, pin }
+        });
+        setActiveTab('add-expense');
+      }
+    });
   };
 
   // Handle Delete Expense with PIN verification
@@ -198,6 +207,7 @@ export function App() {
                     setActiveTab('dashboard');
                   }}
                   showToast={showToast}
+                  onRequestPin={requestPin}
                 />
               )}
 

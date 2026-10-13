@@ -46,12 +46,14 @@ router.post('/complete', async (req, res) => {
       return res.status(400).json({ error: 'Transfer amount must be greater than zero' });
     }
 
-    // PIN check if provided
-    if (pin && authorizing_member_id) {
-      const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
-      if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== pin.toString().trim()) {
-        return res.status(401).json({ error: 'Invalid PIN authorization' });
-      }
+    // Mandatory PIN authorization
+    if (!pin || !authorizing_member_id) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to complete settlement' });
+    }
+
+    const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
+    if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== pin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
     // Insert completed settlement
@@ -81,11 +83,14 @@ router.post('/:id/reverse', async (req, res) => {
     const { id } = req.params;
     const { month, pin, authorizing_member_id } = req.body;
 
-    if (pin && authorizing_member_id) {
-      const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
-      if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== pin.toString().trim()) {
-        return res.status(401).json({ error: 'Invalid PIN authorization' });
-      }
+    // Mandatory PIN authorization
+    if (!pin || !authorizing_member_id) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to reverse settlement' });
+    }
+
+    const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
+    if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== pin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
     const check = await query('SELECT * FROM settlements WHERE id = ?', [id]);

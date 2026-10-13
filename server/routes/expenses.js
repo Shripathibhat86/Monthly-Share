@@ -143,7 +143,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST create expense
+// POST create expense (Protected with Password / PIN)
 router.post('/', async (req, res) => {
   try {
     const {
@@ -156,8 +156,23 @@ router.post('/', async (req, res) => {
       participants, // Array of member IDs or objects { member_id, percentage/weight/amount }
       notes,
       receipt_data,
-      receipt_filename
+      receipt_filename,
+      authorizing_pin,
+      authorizing_member_id,
+      pin
     } = req.body;
+
+    const checkPin = authorizing_pin || pin;
+    const checkMemberId = authorizing_member_id || paid_by_member_id;
+
+    if (!checkPin || !checkMemberId) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to record an expense' });
+    }
+
+    const pinRes = await query('SELECT pin FROM members WHERE id = ?', [checkMemberId]);
+    if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== checkPin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
+    }
 
     if (!title || !title.trim()) {
       return res.status(400).json({ error: 'Expense title is required' });
@@ -259,15 +274,21 @@ router.put('/:id', async (req, res) => {
       receipt_data,
       receipt_filename,
       authorizing_pin,
-      authorizing_member_id
+      authorizing_member_id,
+      pin,
+      memberId
     } = req.body;
 
-    // PIN Verification for authorization
-    if (authorizing_pin && authorizing_member_id) {
-      const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
-      if (pinCheck.rows.length === 0 || pinCheck.rows[0].pin.trim() !== authorizing_pin.toString().trim()) {
-        return res.status(401).json({ error: 'Invalid authorization PIN' });
-      }
+    const checkPin = authorizing_pin || pin;
+    const checkMemberId = authorizing_member_id || memberId || paid_by_member_id;
+
+    if (!checkPin || !checkMemberId) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to edit an expense' });
+    }
+
+    const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [checkMemberId]);
+    if (pinCheck.rows.length === 0 || pinCheck.rows[0].pin.trim() !== checkPin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
     const numAmount = Number(amount);
@@ -344,13 +365,17 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { pin, memberId } = req.body;
+    const { pin, memberId, authorizing_pin, authorizing_member_id } = req.body;
+    const checkPin = pin || authorizing_pin;
+    const checkMemberId = memberId || authorizing_member_id;
 
-    if (pin && memberId) {
-      const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [memberId]);
-      if (pinCheck.rows.length === 0 || pinCheck.rows[0].pin.trim() !== pin.toString().trim()) {
-        return res.status(401).json({ error: 'Invalid authorization PIN' });
-      }
+    if (!checkPin || !checkMemberId) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to delete an expense' });
+    }
+
+    const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [checkMemberId]);
+    if (pinCheck.rows.length === 0 || pinCheck.rows[0].pin.trim() !== checkPin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
     await query('DELETE FROM expense_participants WHERE expense_id = ?', [id]);

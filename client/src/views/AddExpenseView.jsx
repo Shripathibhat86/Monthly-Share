@@ -43,7 +43,8 @@ export function AddExpenseView({
   editingExpense = null,
   onCancelEdit,
   onExpenseSaved,
-  showToast
+  showToast,
+  onRequestPin
 }) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(getCurrentDateISO());
@@ -292,14 +293,62 @@ export function AddExpenseView({
       };
 
       if (editingExpense) {
+        if (!editingExpense.authData?.pin && onRequestPin) {
+          setIsSubmitting(false);
+          onRequestPin({
+            title: 'Authorize Expense Update',
+            message: `Please enter member PIN / password to save modifications to "${payload.title}".`,
+            onConfirm: async ({ memberId, pin }) => {
+              setIsSubmitting(true);
+              try {
+                payload.authorizing_pin = pin;
+                payload.authorizing_member_id = memberId;
+                await api.updateExpense(editingExpense.id, payload);
+                showToast({ type: 'success', message: 'Expense updated and balances recalculated!' });
+                onExpenseSaved();
+              } catch (err) {
+                setErrorMessage(err.message || 'Failed to save expense');
+              } finally {
+                setIsSubmitting(false);
+              }
+            }
+          });
+          return;
+        }
+
+        payload.authorizing_pin = editingExpense.authData?.pin;
+        payload.authorizing_member_id = editingExpense.authData?.memberId;
         await api.updateExpense(editingExpense.id, payload);
         showToast({ type: 'success', message: 'Expense updated and balances recalculated!' });
+        onExpenseSaved();
       } else {
-        await api.createExpense(payload);
-        showToast({ type: 'success', message: 'Expense recorded and balances recalculated!' });
+        if (onRequestPin) {
+          setIsSubmitting(false);
+          onRequestPin({
+            title: 'Authorize New Expense',
+            message: `Please enter member PIN / password to record this expense of ${formatCurrency(numAmount)}.`,
+            onConfirm: async ({ memberId, pin }) => {
+              setIsSubmitting(true);
+              try {
+                payload.authorizing_pin = pin;
+                payload.authorizing_member_id = memberId;
+                await api.createExpense(payload);
+                showToast({ type: 'success', message: 'Expense recorded and balances recalculated!' });
+                onExpenseSaved();
+              } catch (err) {
+                setErrorMessage(err.message || 'Failed to save expense');
+              } finally {
+                setIsSubmitting(false);
+              }
+            }
+          });
+          return;
+        } else {
+          await api.createExpense(payload);
+          showToast({ type: 'success', message: 'Expense recorded and balances recalculated!' });
+          onExpenseSaved();
+        }
       }
-
-      onExpenseSaved();
     } catch (err) {
       setErrorMessage(err.message || 'Failed to save expense');
     } finally {
