@@ -129,7 +129,7 @@ export function Sidebar({
               <span>Fair Split Rules</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Expenses are strictly shared among selected participants. User4 is included only when selected.
+              Expenses are strictly shared among selected participants. Vatsa (occasional) is included only when selected.
             </p>
           </div>
         </div>

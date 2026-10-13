@@ -489,7 +489,7 @@ export function AddExpenseView({
                   Participating Members *
                 </label>
                 <p className="text-[11px] text-slate-500">
-                  Only selected members will share this cost. User4 is optional.
+                  Only selected members will share this cost. Vatsa is optional.
                 </p>
               </div>
 
@@ -499,7 +499,7 @@ export function AddExpenseView({
                   onClick={selectRegularOnly}
                   className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
                 >
-                  Regular Only (User1-3)
+                  Regular Only (3 Members)
                 </button>
                 <button
                   type="button"

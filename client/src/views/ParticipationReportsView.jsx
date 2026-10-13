@@ -111,6 +111,8 @@ export function ParticipationReportsView({
   const currentSummary = monthlyReport?.currentSummary || {};
   const categories = monthlyReport?.categories || [];
   const mom = monthlyReport?.momComparison || {};
+  const occasionalMember = participationData?.members?.find((m) => m.role === 'occasional');
+  const occasionalName = occasionalMember?.name || 'Vatsa';
 
   return (
     <div className="space-y-6">
@@ -135,7 +137,7 @@ export function ParticipationReportsView({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            User4 & Participation
+            {occasionalName} & Participation
           </button>
           <button
             onClick={() => setActiveReportTab('yearly')}
@@ -314,16 +316,16 @@ export function ParticipationReportsView({
         </div>
       )}
 
-      {/* TAB 2: USER4 & PARTICIPATION REPORT */}
+      {/* TAB 2: OCCASIONAL MEMBER & PARTICIPATION REPORT */}
       {activeReportTab === 'participation' && (
         <div className="space-y-6">
           <div className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-white p-5 rounded-2xl border border-amber-200 shadow-xs">
             <div className="flex items-center gap-2 mb-2">
               <Sparkles className="w-5 h-5 text-amber-600" />
-              <h3 className="font-bold text-slate-800 text-base">User4 Occasional Participation Analysis</h3>
+              <h3 className="font-bold text-slate-800 text-base">{occasionalName} Occasional Participation Analysis</h3>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed max-w-2xl">
-              User4 is an occasional member who participates only when explicitly selected. Expenses are never automatically divided across all four members unless User4 joined in.
+              {occasionalName} is an occasional member who participates only when explicitly selected. Expenses are never automatically divided across all four members unless {occasionalName} joined in.
             </p>
           </div>
 
@@ -374,22 +376,22 @@ export function ParticipationReportsView({
             </div>
           )}
 
-          {/* User4 Participated Expenses List */}
-          {participationData?.members?.find(m => m.role === 'occasional') && (
+          {/* Occasional Member Participated Expenses List */}
+          {occasionalMember && (
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
               <div className="p-4 sm:p-5 border-b border-slate-100">
                 <h4 className="font-bold text-slate-800 text-sm">
-                  Expenses Shared with User4 in {getMonthName(selectedMonth)}
+                  Expenses Shared with {occasionalName} in {getMonthName(selectedMonth)}
                 </h4>
               </div>
 
-              {participationData.members.find(m => m.role === 'occasional').participatedExpenses?.length === 0 ? (
+              {occasionalMember.participatedExpenses?.length === 0 ? (
                 <div className="p-8 text-center text-xs text-slate-400">
-                  User4 did not participate in any shared expenses during this period.
+                  {occasionalName} did not participate in any shared expenses during this period.
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {participationData.members.find(m => m.role === 'occasional').participatedExpenses.map(e => (
+                  {occasionalMember.participatedExpenses?.map((e) => (
                     <div key={e.id} className="p-4 flex items-center justify-between text-xs">
                       <div>
                         <span className="font-bold text-slate-800 block text-sm">{e.title}</span>
@@ -397,7 +399,7 @@ export function ParticipationReportsView({
                       </div>
                       <div className="text-right">
                         <span className="font-bold text-slate-900 text-sm block">{formatCurrency(e.amount)}</span>
-                        <span className="text-[10px] text-emerald-600 font-semibold">User4 Included</span>
+                        <span className="text-[10px] text-emerald-600 font-semibold">{occasionalName} Included</span>
                       </div>
                     </div>
                   ))}
