@@ -5,6 +5,7 @@ import { getCurrentMonth } from './utils/formatters';
 // Components
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
+import { BottomNav } from './components/BottomNav';
 import { Toast } from './components/Toast';
 import { PinModal } from './components/PinModal';
 
@@ -160,7 +161,7 @@ export function App() {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 p-4 lg:p-8 overflow-y-auto">
+        <main className="flex-1 p-3.5 sm:p-5 lg:p-8 pb-24 lg:pb-8 overflow-y-auto">
           {isLoading && !settlementSummary ? (
             <div className="flex items-center justify-center h-64">
               <div className="flex flex-col items-center gap-3">
@@ -243,6 +244,18 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/* Mobile Floating Bottom Navigation */}
+      <BottomNav
+        activeTab={activeTab}
+        setActiveTab={(tab) => {
+          if (tab === 'add-expense' && activeTab !== 'add-expense') {
+            setEditingExpense(null);
+          }
+          setActiveTab(tab);
+        }}
+        pendingCount={settlementSummary?.pendingSettlementCount || 0}
+      />
     </div>
   );
 }

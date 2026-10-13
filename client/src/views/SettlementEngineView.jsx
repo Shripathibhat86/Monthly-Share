@@ -242,51 +242,95 @@ export function SettlementEngineView({
             No transfers have been completed for this month yet.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
-              <thead className="bg-slate-50/75 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-100">
-                <tr>
-                  <th className="py-3 px-4 sm:px-6">Payment Date</th>
-                  <th className="py-3 px-4">Payer</th>
-                  <th className="py-3 px-4">Receiver</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  <th className="py-3 px-4">Reference / Note</th>
-                  <th className="py-3 px-4 sm:px-6 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {completedSettlements.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50/50 transition">
-                    <td className="py-3.5 px-4 sm:px-6 font-medium text-slate-600 whitespace-nowrap">
+          <>
+            {/* MOBILE COMPLETED CARDS (< sm) */}
+            <div className="block sm:hidden divide-y divide-slate-100">
+              {completedSettlements.map((s) => (
+                <div key={s.id} className="p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-500">
                       {formatDateIN(s.payment_date || s.created_at)}
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-800">
-                      {s.payer_name}
-                    </td>
-                    <td className="py-3.5 px-4 font-bold text-emerald-700">
-                      {s.receiver_name}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-bold text-slate-900">
+                    </span>
+                    <span className="text-sm font-bold text-slate-900">
                       {formatCurrency(s.amount)}
-                    </td>
-                    <td className="py-3.5 px-4 text-xs text-slate-500">
-                      {s.reference_note || '—'}
-                    </td>
-                    <td className="py-3.5 px-4 sm:px-6 text-right">
-                      <button
-                        onClick={() => handleReverse(s.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition"
-                        title="Reverse this settlement"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Reverse</span>
-                      </button>
-                    </td>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-medium">Payer</span>
+                      <span className="font-bold text-slate-800">{s.payer_name}</span>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-indigo-500 mx-2" />
+                    <div className="text-right">
+                      <span className="text-[10px] text-slate-400 block font-medium">Receiver</span>
+                      <span className="font-bold text-emerald-700">{s.receiver_name}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[11px] text-slate-500 truncate max-w-[200px]">
+                      {s.reference_note ? `Note: ${s.reference_note}` : 'No reference'}
+                    </span>
+                    <button
+                      onClick={() => handleReverse(s.id)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 active:scale-95 rounded-lg transition touch-manipulation"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Reverse</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* DESKTOP TABLE VIEW (>= sm) */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead className="bg-slate-50/75 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-100">
+                  <tr>
+                    <th className="py-3 px-4 sm:px-6">Payment Date</th>
+                    <th className="py-3 px-4">Payer</th>
+                    <th className="py-3 px-4">Receiver</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4">Reference / Note</th>
+                    <th className="py-3 px-4 sm:px-6 text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {completedSettlements.map((s) => (
+                    <tr key={s.id} className="hover:bg-slate-50/50 transition">
+                      <td className="py-3.5 px-4 sm:px-6 font-medium text-slate-600 whitespace-nowrap">
+                        {formatDateIN(s.payment_date || s.created_at)}
+                      </td>
+                      <td className="py-3.5 px-4 font-bold text-slate-800">
+                        {s.payer_name}
+                      </td>
+                      <td className="py-3.5 px-4 font-bold text-emerald-700">
+                        {s.receiver_name}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-bold text-slate-900">
+                        {formatCurrency(s.amount)}
+                      </td>
+                      <td className="py-3.5 px-4 text-xs text-slate-500">
+                        {s.reference_note || '—'}
+                      </td>
+                      <td className="py-3.5 px-4 sm:px-6 text-right">
+                        <button
+                          onClick={() => handleReverse(s.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition"
+                          title="Reverse this settlement"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Reverse</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

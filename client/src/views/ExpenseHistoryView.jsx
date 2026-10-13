@@ -38,6 +38,7 @@ export function ExpenseHistoryView({
   onRequestDelete,
   onNavigateTab
 }) {
+  const [showFilters, setShowFilters] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [selectedPayer, setSelectedPayer] = useState('');
@@ -45,6 +46,10 @@ export function ExpenseHistoryView({
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [viewingExpense, setViewingExpense] = useState(null);
+
+  const activeFilterCount = (selectedCategory !== 'All Categories' ? 1 : 0) +
+    (selectedPayer ? 1 : 0) +
+    (selectedParticipant ? 1 : 0);
 
   // Filter expenses
   const filteredExpenses = expenses.filter((e) => {
@@ -132,43 +137,73 @@ export function ExpenseHistoryView({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Top action & filter bar */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3 sm:space-y-4">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-bold text-slate-800">Expense History</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Filtered {sortedExpenses.length} of {expenses.length} records in this period
+            <h2 className="text-lg sm:text-xl font-bold text-slate-800">Expense History</h2>
+            <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
+              Filtered {sortedExpenses.length} of {expenses.length} records
             </p>
           </div>
 
-          <button
-            onClick={handleExportCSV}
-            disabled={sortedExpenses.length === 0}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-xl transition self-start sm:self-auto"
-          >
-            <Download className="w-4 h-4 text-slate-600" />
-            <span>Export CSV</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`sm:hidden flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl transition border touch-manipulation active:scale-95 ${
+                showFilters || activeFilterCount > 0
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                  : 'bg-slate-100 border-slate-200 text-slate-700'
+              }`}
+              aria-label="Toggle filters"
+            >
+              <Filter className="w-3.5 h-3.5" />
+              <span>Filters</span>
+              {activeFilterCount > 0 && (
+                <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] flex items-center justify-center font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={handleExportCSV}
+              disabled={sortedExpenses.length === 0}
+              className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-xl transition touch-manipulation"
+            >
+              <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" />
+              <span className="hidden xs:inline">Export CSV</span>
+              <span className="xs:hidden">CSV</span>
+            </button>
+          </div>
         </div>
 
-        {/* Search & Filter Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-1">
-          {/* Search */}
-          <div className="relative lg:col-span-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search expenses..."
-              className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-            />
-          </div>
+        {/* Search Bar (always visible) */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search by title, notes, or keyword..."
+            className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 p-0.5"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
 
+        {/* Filter Dropdowns (collapsible on mobile, grid on desktop) */}
+        <div className={`${showFilters ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 animate-fade-in`}>
           {/* Category */}
           <div>
+            <label className="block text-[10px] font-semibold text-slate-400 mb-1 sm:hidden">Category</label>
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
@@ -184,6 +219,7 @@ export function ExpenseHistoryView({
 
           {/* Paid By */}
           <div>
+            <label className="block text-[10px] font-semibold text-slate-400 mb-1 sm:hidden">Paid By</label>
             <select
               value={selectedPayer}
               onChange={(e) => setSelectedPayer(e.target.value)}
@@ -200,6 +236,7 @@ export function ExpenseHistoryView({
 
           {/* Participant */}
           <div>
+            <label className="block text-[10px] font-semibold text-slate-400 mb-1 sm:hidden">Participant</label>
             <select
               value={selectedParticipant}
               onChange={(e) => setSelectedParticipant(e.target.value)}
@@ -215,30 +252,33 @@ export function ExpenseHistoryView({
           </div>
 
           {/* Sort By */}
-          <div className="flex gap-1.5">
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-700"
-            >
-              <option value="date">Sort: Date</option>
-              <option value="amount">Sort: Amount</option>
-            </select>
-            <button
-              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-              className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition"
-              title="Toggle Sort Direction"
-            >
-              <ArrowUpDown className="w-4 h-4" />
-            </button>
+          <div>
+            <label className="block text-[10px] font-semibold text-slate-400 mb-1 sm:hidden">Sort By</label>
+            <div className="flex gap-1.5">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-700"
+              >
+                <option value="date">Sort: Date</option>
+                <option value="amount">Sort: Amount</option>
+              </select>
+              <button
+                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                className="p-2 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-600 rounded-xl transition touch-manipulation"
+                title="Toggle Sort Direction"
+              >
+                <ArrowUpDown className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Expenses Table / Cards */}
+      {/* Expenses Content: Mobile Cards + Desktop Table */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         {sortedExpenses.length === 0 ? (
-          <div className="p-12 text-center">
+          <div className="p-8 sm:p-12 text-center">
             <div className="w-12 h-12 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-3">
               <FileText className="w-6 h-6" />
             </div>
@@ -248,101 +288,197 @@ export function ExpenseHistoryView({
             </p>
             <button
               onClick={() => onNavigateTab('add-expense')}
-              className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition"
+              className="mt-4 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition active:scale-95 touch-manipulation"
             >
-              Add First Expense
+              Add Expense
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs sm:text-sm">
-              <thead className="bg-slate-50/75 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-100">
-                <tr>
-                  <th className="py-3 px-4 sm:px-6">Date</th>
-                  <th className="py-3 px-4">Title & Category</th>
-                  <th className="py-3 px-4 text-right">Amount</th>
-                  <th className="py-3 px-4">Paid By</th>
-                  <th className="py-3 px-4">Split Method & Beneficiaries</th>
-                  <th className="py-3 px-4 text-center">Receipt</th>
-                  <th className="py-3 px-4 sm:px-6 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sortedExpenses.map((exp) => (
-                  <tr key={exp.id} className="hover:bg-slate-50/50 transition">
-                    <td className="py-3.5 px-4 sm:px-6 font-medium text-slate-600 whitespace-nowrap">
-                      {formatDateIN(exp.date)}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="font-bold text-slate-800">{exp.title}</div>
-                      <span className="inline-block mt-0.5 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
-                        {exp.category}
+          <>
+            {/* MOBILE CARD FEED (< sm) */}
+            <div className="block sm:hidden divide-y divide-slate-100">
+              {sortedExpenses.map((exp) => (
+                <div key={exp.id} className="p-3.5 space-y-2.5">
+                  {/* Top line: Date + Category + Amount */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          {formatDateIN(exp.date)}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                          {exp.category}
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-slate-800 text-sm mt-1 leading-snug">
+                        {exp.title}
+                      </h4>
+                    </div>
+
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-base font-bold text-slate-900 block">
+                        {formatCurrency(exp.amount)}
                       </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-bold text-slate-900 text-sm whitespace-nowrap">
-                      {formatCurrency(exp.amount)}
-                    </td>
-                    <td className="py-3.5 px-4 font-semibold text-indigo-700 whitespace-nowrap">
-                      {exp.payer_name}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="text-[11px] font-medium text-slate-500 capitalize">
+                      <span className="text-[10px] font-semibold text-indigo-600 capitalize">
                         {exp.split_method} split
-                      </div>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {exp.participants?.map((p) => (
-                          <span
-                            key={p.member_id}
-                            className="text-[10px] bg-indigo-50/80 text-indigo-800 border border-indigo-100 px-1.5 py-0.5 rounded-md"
-                          >
-                            {p.member_name}: {formatCurrency(p.allocated_amount)}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Beneficiary tags & Paid By */}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-100">
+                      Paid: {exp.payer_name}
+                    </span>
+
+                    {exp.participants?.map((p) => (
+                      <span
+                        key={p.member_id}
+                        className="text-[10px] bg-indigo-50/80 text-indigo-700 border border-indigo-100 px-1.5 py-0.5 rounded-md"
+                      >
+                        {p.member_name}: {formatCurrency(p.allocated_amount)}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Actions line */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-50">
+                    <div>
                       {exp.has_receipt || exp.receipt_data ? (
                         <button
                           onClick={() => setViewingExpense(exp)}
-                          className="p-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition"
-                          title="View Receipt"
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-semibold"
                         >
-                          <FileText className="w-4 h-4" />
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Receipt</span>
                         </button>
                       ) : (
-                        <span className="text-slate-300">—</span>
+                        <span className="text-[11px] text-slate-300">No receipt</span>
                       )}
-                    </td>
-                    <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => setViewingExpense(exp)}
-                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
-                          title="View Details"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => onEditExpense(exp)}
-                          className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
-                          title="Edit Expense"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => onRequestDelete(exp)}
-                          className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                          title="Delete Expense"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setViewingExpense(exp)}
+                        className="p-2 text-slate-500 hover:text-indigo-600 active:scale-95 bg-slate-50 rounded-lg transition"
+                        title="View Details"
+                        aria-label="View Details"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onEditExpense(exp)}
+                        className="p-2 text-slate-500 hover:text-amber-600 active:scale-95 bg-slate-50 rounded-lg transition"
+                        title="Edit Expense"
+                        aria-label="Edit Expense"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onRequestDelete(exp)}
+                        className="p-2 text-slate-500 hover:text-rose-600 active:scale-95 bg-slate-50 rounded-lg transition"
+                        title="Delete Expense"
+                        aria-label="Delete Expense"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* DESKTOP TABLE VIEW (>= sm) */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead className="bg-slate-50/75 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-100">
+                  <tr>
+                    <th className="py-3 px-4 sm:px-6">Date</th>
+                    <th className="py-3 px-4">Title & Category</th>
+                    <th className="py-3 px-4 text-right">Amount</th>
+                    <th className="py-3 px-4">Paid By</th>
+                    <th className="py-3 px-4">Split Method & Beneficiaries</th>
+                    <th className="py-3 px-4 text-center">Receipt</th>
+                    <th className="py-3 px-4 sm:px-6 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sortedExpenses.map((exp) => (
+                    <tr key={exp.id} className="hover:bg-slate-50/50 transition">
+                      <td className="py-3.5 px-4 sm:px-6 font-medium text-slate-600 whitespace-nowrap">
+                        {formatDateIN(exp.date)}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-bold text-slate-800">{exp.title}</div>
+                        <span className="inline-block mt-0.5 text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                          {exp.category}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-bold text-slate-900 text-sm whitespace-nowrap">
+                        {formatCurrency(exp.amount)}
+                      </td>
+                      <td className="py-3.5 px-4 font-semibold text-indigo-700 whitespace-nowrap">
+                        {exp.payer_name}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="text-[11px] font-medium text-slate-500 capitalize">
+                          {exp.split_method} split
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {exp.participants?.map((p) => (
+                            <span
+                              key={p.member_id}
+                              className="text-[10px] bg-indigo-50/80 text-indigo-800 border border-indigo-100 px-1.5 py-0.5 rounded-md"
+                            >
+                              {p.member_name}: {formatCurrency(p.allocated_amount)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {exp.has_receipt || exp.receipt_data ? (
+                          <button
+                            onClick={() => setViewingExpense(exp)}
+                            className="p-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition"
+                            title="View Receipt"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => setViewingExpense(exp)}
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                            title="View Details"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => onEditExpense(exp)}
+                            className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                            title="Edit Expense"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => onRequestDelete(exp)}
+                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="Delete Expense"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

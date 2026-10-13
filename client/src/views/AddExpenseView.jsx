@@ -342,7 +342,7 @@ export function AddExpenseView({
       <form onSubmit={handleFormSubmit} className="space-y-6">
         <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
           {/* Row 1: Title, Category, Amount */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
             <div className="md:col-span-2">
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Expense Title *
@@ -353,7 +353,7 @@ export function AddExpenseView({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Monthly Grocery at Supermarket"
-                className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium"
+                className="w-full px-3.5 py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium"
               />
             </div>
 
@@ -371,14 +371,14 @@ export function AddExpenseView({
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="0.00"
-                  className="w-full pl-8 pr-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-bold text-slate-900"
+                  className="w-full pl-8 pr-3.5 py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-bold text-slate-900"
                 />
               </div>
             </div>
           </div>
 
           {/* Row 2: Date, Category, Paid By */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Date (DD-MM-YYYY) *
@@ -389,7 +389,7 @@ export function AddExpenseView({
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium text-slate-800"
+                  className="w-full px-3.5 py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium text-slate-800"
                 />
               </div>
               <p className="text-[10px] text-slate-400 mt-1">Formatted as: {formatDateIN(date)}</p>
@@ -402,7 +402,7 @@ export function AddExpenseView({
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium text-slate-800 cursor-pointer"
+                className="w-full px-3.5 py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium text-slate-800 cursor-pointer"
               >
                 {CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>
@@ -419,7 +419,7 @@ export function AddExpenseView({
               <select
                 value={paidBy}
                 onChange={(e) => setPaidBy(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold text-indigo-700 cursor-pointer"
+                className="w-full px-3.5 py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-semibold text-indigo-700 cursor-pointer"
               >
                 {members.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -712,12 +712,12 @@ export function AddExpenseView({
         </div>
 
         {/* Submit Button */}
-        <div className="flex justify-end gap-3">
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5 sm:gap-3">
           {editingExpense && (
             <button
               type="button"
               onClick={onCancelEdit}
-              className="px-5 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+              className="w-full sm:w-auto px-5 py-3 sm:py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 rounded-xl transition touch-manipulation text-center"
             >
               Cancel
             </button>
@@ -726,9 +726,9 @@ export function AddExpenseView({
           <button
             type="submit"
             disabled={isSubmitting || !isMatch}
-            className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl shadow-md shadow-indigo-100 transition"
+            className="flex items-center justify-center gap-2 w-full sm:w-auto px-6 py-3 sm:py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 disabled:opacity-50 rounded-xl shadow-md shadow-indigo-100 transition touch-manipulation"
           >
-            <Save className="w-4 h-4" />
+            <Save className="w-4 h-4 stroke-[2.5]" />
             <span>{isSubmitting ? 'Saving...' : editingExpense ? 'Update Expense' : 'Save Expense'}</span>
           </button>
         </div>
