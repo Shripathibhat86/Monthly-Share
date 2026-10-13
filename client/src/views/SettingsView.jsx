@@ -26,9 +26,10 @@ export function SettingsView({
   const [copiedIp, setCopiedIp] = useState('');
   const [copiedCmd, setCopiedCmd] = useState(false);
 
-  // Edit Member Name state
+  // Edit Member Name & UPI ID state
   const [editingMember, setEditingMember] = useState(null);
   const [newName, setNewName] = useState('');
+  const [newUpi, setNewUpi] = useState('');
 
   // Change PIN state
   const [pinMember, setPinMember] = useState(null);
@@ -48,22 +49,26 @@ export function SettingsView({
     showToast({ type: 'success', message: 'Copied to clipboard!' });
   };
 
-  // Save Member Name
+  // Save Member Name and UPI ID
   const handleSaveMemberName = async (e) => {
     e.preventDefault();
     if (!editingMember || !newName.trim()) return;
 
     onRequestPin({
-      title: 'Authorize Name Change',
-      message: `Enter PIN to authorize renaming ${editingMember.name} to "${newName.trim()}"`,
+      title: 'Authorize Profile Update',
+      message: `Enter PIN to authorize updating profile for ${editingMember.name}`,
       onConfirm: async ({ pin }) => {
         try {
-          await api.updateMember(editingMember.id, { name: newName.trim(), pin });
-          showToast({ type: 'success', message: 'Member name updated successfully!' });
+          await api.updateMember(editingMember.id, {
+            name: newName.trim(),
+            upi_id: newUpi.trim() || null,
+            pin
+          });
+          showToast({ type: 'success', message: 'Member profile updated successfully!' });
           setEditingMember(null);
           onRefreshMembers();
         } catch (err) {
-          showToast({ type: 'error', message: err.message || 'Failed to update member name' });
+          showToast({ type: 'error', message: err.message || 'Failed to update member' });
         }
       }
     });
@@ -174,7 +179,14 @@ export function SettingsView({
                     {m.role}
                   </span>
                 </div>
-                <span className="text-[11px] text-slate-400 mt-1 block">PIN: •••• (Authorized)</span>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  {m.upi_id ? (
+                    <span className="font-mono text-indigo-600 font-semibold">UPI: {m.upi_id}</span>
+                  ) : (
+                    <span className="text-slate-400">No UPI set (click edit to add)</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">PIN: •••• (Default 1234)</span>
               </div>
 
               <div className="flex items-center gap-1.5">
@@ -182,9 +194,10 @@ export function SettingsView({
                   onClick={() => {
                     setEditingMember(m);
                     setNewName(m.name);
+                    setNewUpi(m.upi_id || '');
                   }}
                   className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-lg transition border border-transparent hover:border-slate-200"
-                  title="Edit Name"
+                  title="Edit Name & UPI"
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
@@ -381,18 +394,18 @@ export function SettingsView({
         </div>
       </div>
 
-      {/* Edit Member Name Modal */}
+      {/* Edit Member Name & UPI Modal */}
       {editingMember && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in no-print">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100">
-            <h3 className="font-bold text-slate-800 text-base mb-1">Rename Member</h3>
+            <h3 className="font-bold text-slate-800 text-base mb-1">Edit Member Profile</h3>
             <p className="text-xs text-slate-500 mb-4">
-              Updating name for {editingMember.name} ({editingMember.role})
+              Updating details for {editingMember.name} ({editingMember.role})
             </p>
 
             <form onSubmit={handleSaveMemberName} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">New Name</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Member Name *</label>
                 <input
                   type="text"
                   required
@@ -402,7 +415,23 @@ export function SettingsView({
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  UPI ID (Optional, for Receiving Settlements)
+                </label>
+                <input
+                  type="text"
+                  value={newUpi}
+                  onChange={(e) => setNewUpi(e.target.value)}
+                  placeholder="e.g. name@okhdfcbank or 9876543210@paytm"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-mono"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  When other members owe money to this person, this UPI ID will be shown.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setEditingMember(null)}
@@ -414,7 +443,7 @@ export function SettingsView({
                   type="submit"
                   className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition"
                 >
-                  Save Name
+                  Save Profile
                 </button>
               </div>
             </form>

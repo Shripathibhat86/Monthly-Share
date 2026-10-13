@@ -6,7 +6,7 @@ const router = Router();
 // GET all members (safe, without PIN)
 router.get('/', async (req, res) => {
   try {
-    const result = await query('SELECT id, name, role, created_at FROM members ORDER BY id ASC');
+    const result = await query('SELECT id, name, role, upi_id, created_at FROM members ORDER BY id ASC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -38,10 +38,10 @@ router.post('/verify-pin', async (req, res) => {
   }
 });
 
-// PUT update member name or role
+// PUT update member name, role, or upi_id
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, role, pin } = req.body;
+  const { name, role, upi_id, pin } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Name cannot be empty' });
@@ -57,8 +57,8 @@ router.put('/:id', async (req, res) => {
     }
 
     await query(
-      'UPDATE members SET name = ?, role = COALESCE(?, role) WHERE id = ?',
-      [name.trim(), role || null, id]
+      'UPDATE members SET name = ?, role = COALESCE(?, role), upi_id = COALESCE(?, upi_id) WHERE id = ?',
+      [name.trim(), role || null, upi_id !== undefined ? upi_id?.trim() : null, id]
     );
 
     res.json({ success: true, message: 'Member updated successfully' });

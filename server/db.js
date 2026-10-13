@@ -85,8 +85,10 @@ export async function initDb() {
         name VARCHAR(100) NOT NULL,
         role VARCHAR(20) NOT NULL DEFAULT 'regular',
         pin VARCHAR(20) NOT NULL DEFAULT '1234',
+        upi_id VARCHAR(100),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE members ADD COLUMN IF NOT EXISTS upi_id VARCHAR(100);
 
       CREATE TABLE IF NOT EXISTS expenses (
         id SERIAL PRIMARY KEY,
@@ -145,6 +147,7 @@ export async function initDb() {
         name TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'regular',
         pin TEXT NOT NULL DEFAULT '1234',
+        upi_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 

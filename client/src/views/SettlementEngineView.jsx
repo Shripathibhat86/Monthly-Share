@@ -10,7 +10,16 @@ import {
   Calendar,
   CreditCard,
   Hash,
-  X
+  X,
+  FileText,
+  Copy,
+  Check,
+  QrCode,
+  Info,
+  ChevronRight,
+  ExternalLink,
+  History,
+  Receipt
 } from 'lucide-react';
 import { api } from '../services/api';
 import { formatCurrency, formatDateIN, getCurrentDateISO, getMonthName } from '../utils/formatters';
@@ -29,16 +38,18 @@ export function SettlementEngineView({
   const memberSummary = summary.memberSummary || [];
 
   const [settlingTransfer, setSettlingTransfer] = useState(null);
+  const [viewingTransferDetails, setViewingTransferDetails] = useState(null);
+  const [detailsTab, setDetailsTab] = useState('shared'); // 'shared', 'payer_participated', 'payer_paid'
   const [paymentDate, setPaymentDate] = useState(getCurrentDateISO());
   const [referenceNote, setReferenceNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [reversingId, setReversingId] = useState(null);
+  const [copiedUpi, setCopiedUpi] = useState(false);
 
   // Handle Mark as Paid
   const handleOpenSettleModal = (transfer) => {
     setSettlingTransfer(transfer);
     setPaymentDate(getCurrentDateISO());
-    setReferenceNote('Settled via UPI / Cash');
+    setReferenceNote(transfer.receiver_upi_id ? `UPI to ${transfer.receiver_upi_id}` : 'Settled via UPI / Cash');
   };
 
   const handleConfirmSettle = async (e) => {
@@ -61,6 +72,7 @@ export function SettlementEngineView({
         message: `Marked ₹${settlingTransfer.amount} transfer from ${settlingTransfer.payer_name} to ${settlingTransfer.receiver_name} as paid!`
       });
       setSettlingTransfer(null);
+      setViewingTransferDetails(null);
       onRefresh();
     } catch (err) {
       showToast({ type: 'error', message: err.message || 'Failed to complete settlement' });
@@ -88,6 +100,14 @@ export function SettlementEngineView({
         }
       }
     });
+  };
+
+  const handleCopyUpi = (upi) => {
+    if (!upi) return;
+    navigator.clipboard.writeText(upi);
+    setCopiedUpi(true);
+    setTimeout(() => setCopiedUpi(false), 2000);
+    showToast({ type: 'success', message: 'UPI ID copied to clipboard!' });
   };
 
   return (
@@ -138,7 +158,7 @@ export function SettlementEngineView({
             <br />
             2. The <strong>Minimum Cash Flow Algorithm</strong> finds the fewest direct transfers between debtors and creditors to completely zero out all debts.
             <br />
-            3. Marking a transfer as paid records the transaction and offsets outstanding balances <em>without creating a new shared expense</em> or double counting.
+            3. Click <strong>"View Details & History"</strong> on any transfer to inspect the itemized bills and payment destination!
           </p>
         </div>
       </div>
@@ -205,13 +225,35 @@ export function SettlementEngineView({
                   </div>
                 </div>
 
-                <button
-                  onClick={() => handleOpenSettleModal(t)}
-                  className="w-full py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition flex items-center justify-center gap-1.5"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Mark Transfer as Paid</span>
-                </button>
+                {/* Where to pay indicator */}
+                <div className="text-[11px] bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-center justify-between">
+                  <span className="text-slate-500">Destination:</span>
+                  <span className="font-semibold text-slate-700">
+                    {t.receiver_upi_id ? `UPI: ${t.receiver_upi_id}` : `Direct to ${t.receiver_name}`}
+                  </span>
+                </div>
+
+                {/* Action Buttons: View Details & Mark as Paid */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setViewingTransferDetails(t);
+                      setDetailsTab('shared');
+                    }}
+                    className="flex-1 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center justify-center gap-1.5"
+                  >
+                    <History className="w-3.5 h-3.5 text-slate-500" />
+                    <span>View Details & History</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleOpenSettleModal(t)}
+                    className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition flex items-center justify-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Mark as Paid</span>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -242,97 +284,310 @@ export function SettlementEngineView({
             No transfers have been completed for this month yet.
           </div>
         ) : (
-          <>
-            {/* MOBILE COMPLETED CARDS (< sm) */}
-            <div className="block sm:hidden divide-y divide-slate-100">
-              {completedSettlements.map((s) => (
-                <div key={s.id} className="p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-slate-500">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="bg-slate-50/75 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-100">
+                <tr>
+                  <th className="py-3 px-4 sm:px-6">Payment Date</th>
+                  <th className="py-3 px-4">Payer</th>
+                  <th className="py-3 px-4">Receiver</th>
+                  <th className="py-3 px-4 text-right">Amount</th>
+                  <th className="py-3 px-4">Reference / Note</th>
+                  <th className="py-3 px-4 sm:px-6 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {completedSettlements.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-50/50 transition">
+                    <td className="py-3.5 px-4 sm:px-6 font-medium text-slate-600 whitespace-nowrap">
                       {formatDateIN(s.payment_date || s.created_at)}
-                    </span>
-                    <span className="text-sm font-bold text-slate-900">
+                    </td>
+                    <td className="py-3.5 px-4 font-bold text-slate-800">
+                      {s.payer_name}
+                    </td>
+                    <td className="py-3.5 px-4 font-bold text-emerald-700">
+                      {s.receiver_name}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-bold text-slate-900">
                       {formatCurrency(s.amount)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-medium">Payer</span>
-                      <span className="font-bold text-slate-800">{s.payer_name}</span>
-                    </div>
-                    <ArrowRight className="w-4 h-4 text-indigo-500 mx-2" />
-                    <div className="text-right">
-                      <span className="text-[10px] text-slate-400 block font-medium">Receiver</span>
-                      <span className="font-bold text-emerald-700">{s.receiver_name}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[11px] text-slate-500 truncate max-w-[200px]">
-                      {s.reference_note ? `Note: ${s.reference_note}` : 'No reference'}
-                    </span>
-                    <button
-                      onClick={() => handleReverse(s.id)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 active:scale-95 rounded-lg transition touch-manipulation"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reverse</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* DESKTOP TABLE VIEW (>= sm) */}
-            <div className="hidden sm:block overflow-x-auto">
-              <table className="w-full text-left text-xs sm:text-sm">
-                <thead className="bg-slate-50/75 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-100">
-                  <tr>
-                    <th className="py-3 px-4 sm:px-6">Payment Date</th>
-                    <th className="py-3 px-4">Payer</th>
-                    <th className="py-3 px-4">Receiver</th>
-                    <th className="py-3 px-4 text-right">Amount</th>
-                    <th className="py-3 px-4">Reference / Note</th>
-                    <th className="py-3 px-4 sm:px-6 text-right">Action</th>
+                    </td>
+                    <td className="py-3.5 px-4 text-xs text-slate-500">
+                      {s.reference_note || '—'}
+                    </td>
+                    <td className="py-3.5 px-4 sm:px-6 text-right">
+                      <button
+                        onClick={() => handleReverse(s.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition"
+                        title="Reverse this settlement"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Reverse</span>
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {completedSettlements.map((s) => (
-                    <tr key={s.id} className="hover:bg-slate-50/50 transition">
-                      <td className="py-3.5 px-4 sm:px-6 font-medium text-slate-600 whitespace-nowrap">
-                        {formatDateIN(s.payment_date || s.created_at)}
-                      </td>
-                      <td className="py-3.5 px-4 font-bold text-slate-800">
-                        {s.payer_name}
-                      </td>
-                      <td className="py-3.5 px-4 font-bold text-emerald-700">
-                        {s.receiver_name}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-bold text-slate-900">
-                        {formatCurrency(s.amount)}
-                      </td>
-                      <td className="py-3.5 px-4 text-xs text-slate-500">
-                        {s.reference_note || '—'}
-                      </td>
-                      <td className="py-3.5 px-4 sm:px-6 text-right">
-                        <button
-                          onClick={() => handleReverse(s.id)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition"
-                          title="Reverse this settlement"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                          <span>Reverse</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
+
+      {/* VIEW DETAILS & EXPENSE HISTORY MODAL */}
+      {viewingTransferDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in no-print">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+                  Transfer Breakdown & Expense History
+                </span>
+                <h3 className="font-bold text-slate-800 text-lg">
+                  {viewingTransferDetails.payer_name} pays {viewingTransferDetails.receiver_name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setViewingTransferDetails(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto py-4 space-y-4">
+              {/* Payment Destination Card */}
+              <div className="p-4 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-white rounded-2xl border border-emerald-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                      Where to Pay:
+                    </span>
+                    <h4 className="text-sm font-bold text-slate-800">
+                      Pay directly to {viewingTransferDetails.receiver_name}
+                    </h4>
+                    {viewingTransferDetails.receiver_upi_id ? (
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="font-mono text-xs font-bold text-emerald-900 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                          {viewingTransferDetails.receiver_upi_id}
+                        </span>
+                        <button
+                          onClick={() => handleCopyUpi(viewingTransferDetails.receiver_upi_id)}
+                          className="p-1 text-emerald-700 hover:bg-emerald-100 rounded transition"
+                          title="Copy UPI ID"
+                        >
+                          {copiedUpi ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        UPI / Cash / Bank Transfer (UPI ID can be set in Settings)
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 block uppercase font-bold">Transfer Amount</span>
+                    <span className="text-xl font-bold text-emerald-700">
+                      {formatCurrency(viewingTransferDetails.amount)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Math & Balance Summary Cards */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 bg-rose-50/60 rounded-xl border border-rose-100">
+                  <span className="font-bold text-rose-900 block mb-1">
+                    {viewingTransferDetails.payer_name} (Payer)
+                  </span>
+                  <div className="space-y-0.5 text-slate-600">
+                    <div>Paid: <strong>{formatCurrency(viewingTransferDetails.payer_total_paid)}</strong></div>
+                    <div>Fair Share: <strong>{formatCurrency(viewingTransferDetails.payer_actual_share)}</strong></div>
+                    <div className="text-rose-700 font-bold pt-1 border-t border-rose-200">
+                      Net Debt: {formatCurrency(viewingTransferDetails.payer_net_debt)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100">
+                  <span className="font-bold text-emerald-900 block mb-1">
+                    {viewingTransferDetails.receiver_name} (Receiver)
+                  </span>
+                  <div className="space-y-0.5 text-slate-600">
+                    <div>Paid: <strong>{formatCurrency(viewingTransferDetails.receiver_total_paid)}</strong></div>
+                    <div>Fair Share: <strong>{formatCurrency(viewingTransferDetails.receiver_actual_share)}</strong></div>
+                    <div className="text-emerald-700 font-bold pt-1 border-t border-emerald-200">
+                      Net Credit: {formatCurrency(viewingTransferDetails.receiver_net_credit)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* History Sub-tabs */}
+              <div className="border-b border-slate-200 pb-2">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setDetailsTab('shared')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                      detailsTab === 'shared'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Shared Bills with {viewingTransferDetails.receiver_name} ({viewingTransferDetails.sharedExpenses?.length || 0})
+                  </button>
+                  <button
+                    onClick={() => setDetailsTab('payer_participated')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                      detailsTab === 'payer_participated'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All {viewingTransferDetails.payer_name}'s Shared Bills ({viewingTransferDetails.allPayerParticipatedExpenses?.length || 0})
+                  </button>
+                  <button
+                    onClick={() => setDetailsTab('payer_paid')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                      detailsTab === 'payer_paid'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Bills Paid by {viewingTransferDetails.payer_name} ({viewingTransferDetails.allPayerPaidExpenses?.length || 0})
+                  </button>
+                </div>
+              </div>
+
+              {/* Table of Bills for selected tab */}
+              {detailsTab === 'shared' && (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-slate-500">
+                    These are all the expenses paid by <strong>{viewingTransferDetails.receiver_name}</strong> that <strong>{viewingTransferDetails.payer_name}</strong> benefited from:
+                  </p>
+                  {viewingTransferDetails.sharedExpenses?.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+                      No direct shared bills. This transfer was assigned by the Minimum Cash Flow algorithm to balance multi-party debts in the fewest transactions.
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px]">
+                          <tr>
+                            <th className="py-2.5 px-3">Date</th>
+                            <th className="py-2.5 px-3">Expense Title</th>
+                            <th className="py-2.5 px-3 text-right">Total Bill</th>
+                            <th className="py-2.5 px-3 text-right">{viewingTransferDetails.payer_name}'s Share</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {viewingTransferDetails.sharedExpenses.map((exp) => (
+                            <tr key={exp.id} className="hover:bg-slate-50/50">
+                              <td className="py-2 px-3 text-slate-500 whitespace-nowrap">{formatDateIN(exp.date)}</td>
+                              <td className="py-2 px-3 font-semibold text-slate-800">{exp.title}</td>
+                              <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(exp.total_bill)}</td>
+                              <td className="py-2 px-3 text-right font-bold text-rose-600">{formatCurrency(exp.allocated_share)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {detailsTab === 'payer_participated' && (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-slate-500">
+                    Complete list of all shared expenses <strong>{viewingTransferDetails.payer_name}</strong> participated in this month:
+                  </p>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px] sticky top-0">
+                        <tr>
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Expense</th>
+                          <th className="py-2.5 px-3">Paid By</th>
+                          <th className="py-2.5 px-3 text-right">Total</th>
+                          <th className="py-2.5 px-3 text-right">My Share</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {viewingTransferDetails.allPayerParticipatedExpenses?.map((exp) => (
+                          <tr key={exp.id} className="hover:bg-slate-50/50">
+                            <td className="py-2 px-3 text-slate-500 whitespace-nowrap">{formatDateIN(exp.date)}</td>
+                            <td className="py-2 px-3 font-medium text-slate-800">{exp.title}</td>
+                            <td className="py-2 px-3 text-indigo-600 font-medium">{exp.payer_name}</td>
+                            <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(exp.total_bill)}</td>
+                            <td className="py-2 px-3 text-right font-bold text-rose-600">{formatCurrency(exp.allocated_share)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {detailsTab === 'payer_paid' && (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-slate-500">
+                    Expenses paid by <strong>{viewingTransferDetails.payer_name}</strong> this month (which lowered their debt):
+                  </p>
+                  {viewingTransferDetails.allPayerPaidExpenses?.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+                      {viewingTransferDetails.payer_name} did not pay for any shared expenses this month.
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px]">
+                          <tr>
+                            <th className="py-2.5 px-3">Date</th>
+                            <th className="py-2.5 px-3">Expense Title</th>
+                            <th className="py-2.5 px-3">Category</th>
+                            <th className="py-2.5 px-3 text-right">Amount Paid</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {viewingTransferDetails.allPayerPaidExpenses.map((exp) => (
+                            <tr key={exp.id} className="hover:bg-slate-50/50">
+                              <td className="py-2 px-3 text-slate-500 whitespace-nowrap">{formatDateIN(exp.date)}</td>
+                              <td className="py-2 px-3 font-medium text-slate-800">{exp.title}</td>
+                              <td className="py-2 px-3 text-slate-500">{exp.category}</td>
+                              <td className="py-2 px-3 text-right font-bold text-emerald-600">{formatCurrency(exp.amount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setViewingTransferDetails(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+              >
+                Close
+              </button>
+
+              <button
+                onClick={() => {
+                  handleOpenSettleModal(viewingTransferDetails);
+                }}
+                className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Proceed to Mark as Paid</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mark Transfer as Paid Modal */}
       {settlingTransfer && (
@@ -361,7 +616,9 @@ export function SettlementEngineView({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Receiver:</span>
-                  <span className="font-bold text-slate-800">{settlingTransfer.receiver_name}</span>
+                  <span className="font-bold text-slate-800">
+                    {settlingTransfer.receiver_name} {settlingTransfer.receiver_upi_id ? `(${settlingTransfer.receiver_upi_id})` : ''}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm pt-1 border-t border-indigo-100">
                   <span className="font-bold text-slate-700">Amount:</span>
@@ -386,13 +643,13 @@ export function SettlementEngineView({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Reference Note / Payment ID
+                  Reference Note / UPI ID / Payment Mode
                 </label>
                 <input
                   type="text"
                   value={referenceNote}
                   onChange={(e) => setReferenceNote(e.target.value)}
-                  placeholder="e.g. UPI Ref 382910, Cash, GPay"
+                  placeholder="e.g. UPI Ref 382910, GPay, Cash"
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                 />
               </div>
