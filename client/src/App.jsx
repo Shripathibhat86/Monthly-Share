@@ -131,6 +131,14 @@ export function App() {
     });
   };
 
+  // Handle Delete All Expenses with PIN authorization
+  const handleRequestDeleteAll = async ({ scope, month, expenseIds, memberId, pin }) => {
+    const res = await api.deleteAllExpenses({ scope, month, expenseIds, memberId, pin });
+    showToast({ type: 'success', message: res.message || 'Expenses deleted successfully!' });
+    await loadData(month || selectedMonth);
+    return res;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased">
       {/* Toast Notification */}
@@ -218,6 +226,9 @@ export function App() {
                   selectedMonth={selectedMonth}
                   onEditExpense={handleEditExpense}
                   onRequestDelete={handleRequestDelete}
+                  onRequestDeleteAll={handleRequestDeleteAll}
+                  onRefresh={loadData}
+                  showToast={showToast}
                   onNavigateTab={setActiveTab}
                 />
               )}

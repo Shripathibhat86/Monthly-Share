@@ -361,20 +361,126 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE expense (PIN protected)
+// Handler for deleting all or scoped expenses (PIN protected)
+async function handleDeleteAll(req, res) {
+  try {
+    const {
+      pin,
+      memberId,
+      authorizing_pin,
+      authorizing_member_id,
+      scope = 'month', // 'month', 'all', or 'filtered'
+      month,
+      expenseIds
+    } = req.body;
+
+    const checkPin = pin || authorizing_pin;
+    const checkMemberId = memberId || authorizing_member_id;
+
+    if (!checkPin || !checkPin.toString().trim()) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to delete expenses' });
+    }
+
+    const cleanPin = checkPin.toString().trim();
+
+    // Verify PIN against specific member or any member
+    let verified = false;
+    let authorizedMember = null;
+
+    if (checkMemberId && checkMemberId !== 'any' && Number(checkMemberId) > 0) {
+      const pinCheck = await query('SELECT id, name, pin FROM members WHERE id = ?', [Number(checkMemberId)]);
+      if (pinCheck.rows.length > 0 && pinCheck.rows[0].pin.trim() === cleanPin) {
+        verified = true;
+        authorizedMember = pinCheck.rows[0];
+      }
+    } else {
+      const allMembers = await query('SELECT id, name, pin FROM members');
+      const matched = allMembers.rows.find((m) => m.pin.trim() === cleanPin);
+      if (matched) {
+        verified = true;
+        authorizedMember = matched;
+      }
+    }
+
+    if (!verified) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
+    }
+
+    let deletedCount = 0;
+
+    if (scope === 'filtered' && Array.isArray(expenseIds) && expenseIds.length > 0) {
+      const validIds = expenseIds.map(Number).filter((n) => !isNaN(n) && n > 0);
+      if (validIds.length > 0) {
+        const placeholders = validIds.map(() => '?').join(',');
+        await query(`DELETE FROM expense_participants WHERE expense_id IN (${placeholders})`, validIds);
+        const delRes = await query(`DELETE FROM expenses WHERE id IN (${placeholders})`, validIds);
+        deletedCount = delRes.changes || validIds.length;
+      }
+    } else if (scope === 'all') {
+      const allExp = await query('SELECT id FROM expenses');
+      deletedCount = allExp.rows.length;
+      await query('DELETE FROM expense_participants');
+      await query('DELETE FROM expenses');
+    } else {
+      // Default: scoped to month
+      const targetMonth = month || new Date().toISOString().slice(0, 7);
+      const monthExp = await query('SELECT id FROM expenses WHERE date LIKE ?', [`${targetMonth}-%`]);
+      deletedCount = monthExp.rows.length;
+      const ids = monthExp.rows.map((r) => r.id);
+      if (ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        await query(`DELETE FROM expense_participants WHERE expense_id IN (${placeholders})`, ids);
+        await query(`DELETE FROM expenses WHERE id IN (${placeholders})`, ids);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${deletedCount} expense record${deletedCount === 1 ? '' : 's'}`,
+      deletedCount,
+      authorizedBy: authorizedMember?.name
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// DELETE all or scoped expenses (mounted before /:id)
+router.delete('/all', handleDeleteAll);
+router.delete('/', handleDeleteAll);
+
+// DELETE single expense (PIN protected)
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (id === 'all') {
+      return handleDeleteAll(req, res);
+    }
+
     const { pin, memberId, authorizing_pin, authorizing_member_id } = req.body;
     const checkPin = pin || authorizing_pin;
     const checkMemberId = memberId || authorizing_member_id;
 
-    if (!checkPin || !checkMemberId) {
+    if (!checkPin) {
       return res.status(401).json({ error: 'Password / PIN authorization is required to delete an expense' });
     }
 
-    const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [checkMemberId]);
-    if (pinCheck.rows.length === 0 || pinCheck.rows[0].pin.trim() !== checkPin.toString().trim()) {
+    const cleanPin = checkPin.toString().trim();
+    let verified = false;
+
+    if (checkMemberId && checkMemberId !== 'any' && Number(checkMemberId) > 0) {
+      const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [Number(checkMemberId)]);
+      if (pinCheck.rows.length > 0 && pinCheck.rows[0].pin.trim() === cleanPin) {
+        verified = true;
+      }
+    } else {
+      const allMembers = await query('SELECT pin FROM members');
+      if (allMembers.rows.some((m) => m.pin.trim() === cleanPin)) {
+        verified = true;
+      }
+    }
+
+    if (!verified) {
       return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 

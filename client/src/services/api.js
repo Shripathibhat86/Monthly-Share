@@ -43,6 +43,7 @@ export const api = {
   createExpense: (payload) => request('/expenses', { method: 'POST', body: JSON.stringify(payload) }),
   updateExpense: (id, payload) => request(`/expenses/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteExpense: (id, payload) => request(`/expenses/${id}`, { method: 'DELETE', body: JSON.stringify(payload) }),
+  deleteAllExpenses: (payload) => request('/expenses/all', { method: 'DELETE', body: JSON.stringify(payload) }),
 
   // Settlements
   getSettlementSummary: (month) => request(`/settlements/summary?month=${encodeURIComponent(month)}`),

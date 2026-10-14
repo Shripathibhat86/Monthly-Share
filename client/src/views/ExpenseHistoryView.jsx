@@ -11,10 +11,13 @@ import {
   Calendar,
   Users,
   AlertCircle,
+  AlertTriangle,
+  ShieldCheck,
   X,
   ExternalLink
 } from 'lucide-react';
-import { formatCurrency, formatDateIN } from '../utils/formatters';
+import { formatCurrency, formatDateIN, getMonthName } from '../utils/formatters';
+import { api } from '../services/api';
 
 const CATEGORIES = [
   'All Categories',
@@ -36,6 +39,9 @@ export function ExpenseHistoryView({
   selectedMonth,
   onEditExpense,
   onRequestDelete,
+  onRequestDeleteAll,
+  onRefresh,
+  showToast,
   onNavigateTab
 }) {
   const [showFilters, setShowFilters] = useState(false);
@@ -46,6 +52,15 @@ export function ExpenseHistoryView({
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [viewingExpense, setViewingExpense] = useState(null);
+
+  // Delete All state
+  const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
+  const [deleteAllScope, setDeleteAllScope] = useState('month'); // 'month', 'filtered', or 'all'
+  const [deleteAuthorizingMemberId, setDeleteAuthorizingMemberId] = useState(members[0]?.id || 'any');
+  const [deleteAllPin, setDeleteAllPin] = useState('');
+  const [showDeleteAllPin, setShowDeleteAllPin] = useState(false);
+  const [deleteAllError, setDeleteAllError] = useState('');
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   const activeFilterCount = (selectedCategory !== 'All Categories' ? 1 : 0) +
     (selectedPayer ? 1 : 0) +
@@ -136,6 +151,58 @@ export function ExpenseHistoryView({
     document.body.removeChild(link);
   };
 
+  // Handle Delete All Confirmation
+  const handleDeleteAllConfirm = async (e) => {
+    e.preventDefault();
+    const cleanPin = deleteAllPin.trim();
+    if (!cleanPin) {
+      setDeleteAllError('Please enter member PIN / password');
+      return;
+    }
+
+    setIsDeletingAll(true);
+    setDeleteAllError('');
+
+    try {
+      let expenseIds = undefined;
+      if (deleteAllScope === 'filtered') {
+        expenseIds = filteredExpenses.map((exp) => exp.id);
+      }
+
+      if (onRequestDeleteAll) {
+        await onRequestDeleteAll({
+          scope: deleteAllScope,
+          month: selectedMonth,
+          expenseIds,
+          memberId: deleteAuthorizingMemberId,
+          pin: cleanPin
+        });
+      } else {
+        const res = await api.deleteAllExpenses({
+          scope: deleteAllScope,
+          month: selectedMonth,
+          expenseIds,
+          memberId: deleteAuthorizingMemberId,
+          pin: cleanPin
+        });
+        if (showToast) {
+          showToast({ type: 'success', message: res.message || 'Expenses deleted successfully' });
+        }
+        if (onRefresh) {
+          onRefresh();
+        }
+      }
+
+      setIsDeleteAllOpen(false);
+      setDeleteAllPin('');
+      setDeleteAllError('');
+    } catch (err) {
+      setDeleteAllError(err.message || 'Failed to delete expenses. Please check your PIN.');
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Top action & filter bar */}
@@ -175,6 +242,24 @@ export function ExpenseHistoryView({
               <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" />
               <span className="hidden xs:inline">Export CSV</span>
               <span className="xs:hidden">CSV</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setIsDeleteAllOpen(true);
+                setDeleteAllPin('');
+                setDeleteAllError('');
+                if (members.length > 0 && deleteAuthorizingMemberId === 'any') {
+                  setDeleteAuthorizingMemberId(members[0].id);
+                }
+              }}
+              disabled={expenses.length === 0}
+              className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed border border-rose-200/80 rounded-xl transition touch-manipulation active:scale-95"
+              title="Delete All Expenses"
+            >
+              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-600" />
+              <span className="hidden xs:inline">Delete All</span>
+              <span className="xs:hidden">Delete</span>
             </button>
           </div>
         </div>
@@ -598,6 +683,223 @@ export function ExpenseHistoryView({
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete All Expenses Modal (PIN Protected) */}
+      {isDeleteAllOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in no-print">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm sm:text-base leading-tight">Delete All Expenses</h3>
+                  <p className="text-[11px] text-rose-500 font-medium">Irreversible Security Action</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isDeletingAll) {
+                    setIsDeleteAllOpen(false);
+                    setDeleteAllPin('');
+                    setDeleteAllError('');
+                  }
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition"
+                aria-label="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Warning Banner */}
+            <div className="flex items-start gap-2.5 mt-4 p-3 text-xs text-rose-800 bg-rose-50/90 rounded-xl border border-rose-200/80">
+              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-bold">Permanent Deletion Warning</p>
+                <p className="text-[11px] text-rose-700 leading-relaxed">
+                  Deleting expenses permanently clears receipt files, itemized splits, and recalculates monthly balances.
+                </p>
+              </div>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleDeleteAllConfirm} className="mt-4 space-y-4">
+              {/* Select Scope */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-2">Select Delete Scope</label>
+                <div className="space-y-2">
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition ${
+                      deleteAllScope === 'month'
+                        ? 'border-indigo-600 bg-indigo-50/40 text-slate-800 shadow-xs'
+                        : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="deleteScope"
+                      value="month"
+                      checked={deleteAllScope === 'month'}
+                      onChange={() => setDeleteAllScope('month')}
+                      className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div>
+                      <span className="text-xs font-bold block text-slate-800">
+                        Current Month ({getMonthName(selectedMonth)})
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Deletes all {expenses.length} expense{expenses.length === 1 ? '' : 's'} recorded for this month
+                      </span>
+                    </div>
+                  </label>
+
+                  {filteredExpenses.length !== expenses.length && (
+                    <label
+                      className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition ${
+                        deleteAllScope === 'filtered'
+                          ? 'border-indigo-600 bg-indigo-50/40 text-slate-800 shadow-xs'
+                          : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-600'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="deleteScope"
+                        value="filtered"
+                        checked={deleteAllScope === 'filtered'}
+                        onChange={() => setDeleteAllScope('filtered')}
+                        className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="text-xs font-bold block text-slate-800">
+                          Filtered Results Only
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Deletes only the {filteredExpenses.length} filtered expense{filteredExpenses.length === 1 ? '' : 's'} currently showing
+                        </span>
+                      </div>
+                    </label>
+                  )}
+
+                  <label
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition ${
+                      deleteAllScope === 'all'
+                        ? 'border-rose-600 bg-rose-50/40 text-slate-800 shadow-xs'
+                        : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 text-slate-600'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="deleteScope"
+                      value="all"
+                      checked={deleteAllScope === 'all'}
+                      onChange={() => setDeleteAllScope('all')}
+                      className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                    />
+                    <div>
+                      <span className="text-xs font-bold block text-rose-700">
+                        All Months (Entire History)
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        Deletes every expense across all months in the entire database
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Authorizing Member Selection */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Authorizing Member</label>
+                <select
+                  value={deleteAuthorizingMemberId}
+                  onChange={(e) => setDeleteAuthorizingMemberId(e.target.value === 'any' ? 'any' : Number(e.target.value))}
+                  className="w-full px-3 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-700"
+                >
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.role})
+                    </option>
+                  ))}
+                  <option value="any">Any Member Password</option>
+                </select>
+              </div>
+
+              {/* Security PIN input */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Security PIN / Password</label>
+                <div className="relative">
+                  <input
+                    type={showDeleteAllPin ? 'text' : 'password'}
+                    maxLength={32}
+                    autoFocus
+                    value={deleteAllPin}
+                    onChange={(e) => setDeleteAllPin(e.target.value)}
+                    placeholder="Enter PIN to authorize deletion"
+                    className="w-full tracking-wider text-center text-lg font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-slate-800 placeholder:text-slate-400 placeholder:text-xs placeholder:font-normal placeholder:tracking-normal"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteAllPin(!showDeleteAllPin)}
+                    className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 p-0.5"
+                    title={showDeleteAllPin ? 'Hide PIN' : 'Show PIN'}
+                  >
+                    {showDeleteAllPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 text-center mt-1.5 flex items-center justify-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                  <span>Requires valid member PIN to execute deletion</span>
+                </p>
+              </div>
+
+              {/* Error message */}
+              {deleteAllError && (
+                <div className="flex items-center gap-2 p-3 text-xs font-semibold text-rose-700 bg-rose-50 rounded-xl border border-rose-200 animate-shake">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{deleteAllError}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isDeletingAll}
+                  onClick={() => {
+                    setIsDeleteAllOpen(false);
+                    setDeleteAllPin('');
+                    setDeleteAllError('');
+                  }}
+                  className="flex-1 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition active:scale-95 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isDeletingAll || !deleteAllPin.trim()}
+                  className="flex-1 py-2.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition disabled:opacity-50 active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  {isDeletingAll ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Confirm & Delete</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
