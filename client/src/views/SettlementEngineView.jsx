@@ -19,7 +19,9 @@ import {
   ChevronRight,
   ExternalLink,
   History,
-  Receipt
+  Receipt,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { api } from '../services/api';
 import { formatCurrency, formatDateIN, getCurrentDateISO, getMonthName } from '../utils/formatters';
@@ -39,7 +41,7 @@ export function SettlementEngineView({
 
   const [settlingTransfer, setSettlingTransfer] = useState(null);
   const [viewingTransferDetails, setViewingTransferDetails] = useState(null);
-  const [detailsTab, setDetailsTab] = useState('shared'); // 'shared', 'payer_participated', 'payer_paid'
+  const [showOffsetBills, setShowOffsetBills] = useState(false);
   const [paymentDate, setPaymentDate] = useState(getCurrentDateISO());
   const [referenceNote, setReferenceNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -246,7 +248,7 @@ export function SettlementEngineView({
                   <button
                     onClick={() => {
                       setViewingTransferDetails(t);
-                      setDetailsTab('shared');
+                      setShowOffsetBills(false);
                     }}
                     className="flex-1 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center justify-center gap-1.5"
                   >
@@ -340,262 +342,482 @@ export function SettlementEngineView({
         )}
       </div>
 
-      {/* VIEW DETAILS & EXPENSE HISTORY MODAL */}
-      {viewingTransferDetails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fade-in no-print">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">
-                  Transfer Breakdown & Expense History
-                </span>
-                <h3 className="font-bold text-slate-800 text-lg">
-                  {viewingTransferDetails.payer_name} pays {viewingTransferDetails.receiver_name}
-                </h3>
-              </div>
-              <button
-                onClick={() => setViewingTransferDetails(null)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* HOW THIS TRANSFER IS CALCULATED MODAL */}
+      {viewingTransferDetails && (() => {
+        const t = viewingTransferDetails;
+        const breakdown = t.breakdown || {
+          summaryExplanation:
+            "This amount is calculated from the difference between the amount you paid and your share of the expenses, after accounting for the other participants' balances.",
+          contributingBills: (t.sharedExpenses || []).map((e) => ({
+            id: e.id,
+            date: e.date,
+            title: e.title,
+            category: e.category,
+            total_bill: e.total_bill,
+            paid_by_name: t.receiver_name,
+            payer_share: e.allocated_share,
+            explanation: `${t.payer_name} owes this share because ${t.receiver_name} paid the bill.`
+          })),
+          contributingBillsTotal: t.amount,
+          stepCalculation: {
+            payerTotalPaid: t.payer_total_paid || 0,
+            payerActualShare: t.payer_actual_share || 0,
+            payerNetBalance: -(t.payer_net_debt || t.amount),
+            payerStatusText: `${t.payer_name} owes an overall net balance of ${formatCurrency(t.payer_net_debt || t.amount)} across all expenses.`,
+            initialAmountOwed: t.payer_net_debt || t.amount,
+            initialAmountOwedLabel: 'Initial amount owed',
+            directOffsetBills: [],
+            directOffsetAmount: 0,
+            directNetDebt: t.amount,
+            thirdPartyAdjustments: [],
+            totalAdjustmentsAmount: 0,
+            finalRecommendedTransfer: t.amount
+          }
+        };
 
-            {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto py-4 space-y-4">
-              {/* Payment Destination Card */}
-              <div className="p-4 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-white rounded-2xl border border-emerald-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-                      Where to Pay:
+        const stepCalc = breakdown.stepCalculation || {};
+        const contributingBills = breakdown.contributingBills || [];
+        const isBillsTotalDifferent = Math.abs((breakdown.contributingBillsTotal || 0) - t.amount) > 0.01;
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in no-print">
+            <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200/80 max-h-[92vh] flex flex-col overflow-hidden">
+              {/* Header */}
+              <div className="p-4 sm:p-5 border-b border-slate-100 flex items-start justify-between gap-4 bg-slate-50/50">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg sm:text-xl">
+                    How This Transfer Is Calculated
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    A transparent breakdown of the amount you need to pay.
+                  </p>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <span className="text-xs font-bold text-rose-700 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200">
+                      Payer: {t.payer_name}
                     </span>
-                    <h4 className="text-sm font-bold text-slate-800">
-                      Pay directly to {viewingTransferDetails.receiver_name}
-                    </h4>
-                    {viewingTransferDetails.receiver_upi_id ? (
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="font-mono text-xs font-bold text-emerald-900 bg-white px-2 py-0.5 rounded border border-emerald-200">
-                          {viewingTransferDetails.receiver_upi_id}
+                    <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      Receiver: {t.receiver_name}
+                    </span>
+                    <span className="text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200 ml-1">
+                      Transfer: {formatCurrency(t.amount)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingTransferDetails(null)}
+                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-xl transition"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Scrollable Modal Content */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+                {/* SECTION A — Transfer Summary */}
+                <div className="p-4 sm:p-5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Section A — Transfer Summary
+                    </span>
+                    <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-100">
+                      Settlement Recommendation
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/60">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                        Payer
+                      </span>
+                      <span className="font-bold text-slate-800 text-sm sm:text-base">
+                        {t.payer_name}
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200/60">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
+                        Receiver
+                      </span>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-800 text-sm sm:text-base">
+                          {t.receiver_name}
                         </span>
-                        <button
-                          onClick={() => handleCopyUpi(viewingTransferDetails.receiver_upi_id)}
-                          className="p-1 text-emerald-700 hover:bg-emerald-100 rounded transition"
-                          title="Copy UPI ID"
-                        >
-                          {copiedUpi ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-                        </button>
+                        {t.receiver_upi_id && (
+                          <button
+                            onClick={() => handleCopyUpi(t.receiver_upi_id)}
+                            className="inline-flex items-center gap-1 text-[11px] font-mono font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200 transition"
+                            title="Copy UPI ID"
+                          >
+                            <span>{t.receiver_upi_id}</span>
+                            {copiedUpi ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          </button>
+                        )}
                       </div>
-                    ) : (
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        UPI / Cash / Bank Transfer (UPI ID can be set in Settings)
-                      </p>
-                    )}
+                    </div>
+
+                    <div className="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 block mb-1">
+                        Amount to Transfer
+                      </span>
+                      <span className="font-black text-indigo-700 text-lg sm:text-xl">
+                        {formatCurrency(t.amount)}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block uppercase font-bold">Transfer Amount</span>
-                    <span className="text-xl font-bold text-emerald-700">
-                      {formatCurrency(viewingTransferDetails.amount)}
+                  {/* Short Explanation Box */}
+                  <div className="p-3 bg-indigo-50/40 border border-indigo-100 rounded-xl flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-indigo-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-indigo-950 leading-relaxed">
+                      {breakdown.summaryExplanation ||
+                        "This amount is calculated from the difference between the amount you paid and your share of the expenses, after accounting for the other participants' balances."}
+                    </p>
+                  </div>
+                </div>
+
+                {/* SECTION B — Bill-wise Breakdown */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+                  <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-indigo-600" />
+                        <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                          Section B — Bill-wise Breakdown
+                        </h4>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Relevant expenses that contribute to this transfer calculation.
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold text-slate-500">
+                      {contributingBills.length} contributing {contributingBills.length === 1 ? 'bill' : 'bills'}
                     </span>
                   </div>
-                </div>
-              </div>
 
-              {/* Math & Balance Summary Cards */}
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="p-3 bg-rose-50/60 rounded-xl border border-rose-100">
-                  <span className="font-bold text-rose-900 block mb-1">
-                    {viewingTransferDetails.payer_name} (Payer)
-                  </span>
-                  <div className="space-y-0.5 text-slate-600">
-                    <div>Paid: <strong>{formatCurrency(viewingTransferDetails.payer_total_paid)}</strong></div>
-                    <div>Fair Share: <strong>{formatCurrency(viewingTransferDetails.payer_actual_share)}</strong></div>
-                    <div className="text-rose-700 font-bold pt-1 border-t border-rose-200">
-                      Net Debt: {formatCurrency(viewingTransferDetails.payer_net_debt)}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100">
-                  <span className="font-bold text-emerald-900 block mb-1">
-                    {viewingTransferDetails.receiver_name} (Receiver)
-                  </span>
-                  <div className="space-y-0.5 text-slate-600">
-                    <div>Paid: <strong>{formatCurrency(viewingTransferDetails.receiver_total_paid)}</strong></div>
-                    <div>Fair Share: <strong>{formatCurrency(viewingTransferDetails.receiver_actual_share)}</strong></div>
-                    <div className="text-emerald-700 font-bold pt-1 border-t border-emerald-200">
-                      Net Credit: {formatCurrency(viewingTransferDetails.receiver_net_credit)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* History Sub-tabs */}
-              <div className="border-b border-slate-200 pb-2">
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setDetailsTab('shared')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                      detailsTab === 'shared'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Shared Bills with {viewingTransferDetails.receiver_name} ({viewingTransferDetails.sharedExpenses?.length || 0})
-                  </button>
-                  <button
-                    onClick={() => setDetailsTab('payer_participated')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                      detailsTab === 'payer_participated'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    All {viewingTransferDetails.payer_name}'s Shared Bills ({viewingTransferDetails.allPayerParticipatedExpenses?.length || 0})
-                  </button>
-                  <button
-                    onClick={() => setDetailsTab('payer_paid')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                      detailsTab === 'payer_paid'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Bills Paid by {viewingTransferDetails.payer_name} ({viewingTransferDetails.allPayerPaidExpenses?.length || 0})
-                  </button>
-                </div>
-              </div>
-
-              {/* Table of Bills for selected tab */}
-              {detailsTab === 'shared' && (
-                <div className="space-y-2">
-                  <p className="text-[11px] text-slate-500">
-                    These are all the expenses paid by <strong>{viewingTransferDetails.receiver_name}</strong> that <strong>{viewingTransferDetails.payer_name}</strong> benefited from:
-                  </p>
-                  {viewingTransferDetails.sharedExpenses?.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
-                      No direct shared bills. This transfer was assigned by the Minimum Cash Flow algorithm to balance multi-party debts in the fewest transactions.
+                  {contributingBills.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-400">
+                      No specific shared bills found for this transfer.
                     </div>
                   ) : (
-                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="overflow-x-auto">
                       <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px]">
+                        <thead className="bg-slate-50/80 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-100 tracking-wider">
                           <tr>
-                            <th className="py-2.5 px-3">Date</th>
-                            <th className="py-2.5 px-3">Expense Title</th>
-                            <th className="py-2.5 px-3 text-right">Total Bill</th>
-                            <th className="py-2.5 px-3 text-right">{viewingTransferDetails.payer_name}'s Share</th>
+                            <th className="py-2.5 px-3 sm:px-4">Date</th>
+                            <th className="py-2.5 px-3">Expense Description</th>
+                            <th className="py-2.5 px-3 text-right">Total Bill Amount</th>
+                            <th className="py-2.5 px-3">Paid By</th>
+                            <th className="py-2.5 px-3 text-right">{t.payer_name}'s Share</th>
+                            <th className="py-2.5 px-3 sm:px-4">Explanation</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {viewingTransferDetails.sharedExpenses.map((exp) => (
-                            <tr key={exp.id} className="hover:bg-slate-50/50">
-                              <td className="py-2 px-3 text-slate-500 whitespace-nowrap">{formatDateIN(exp.date)}</td>
-                              <td className="py-2 px-3 font-semibold text-slate-800">{exp.title}</td>
-                              <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(exp.total_bill)}</td>
-                              <td className="py-2 px-3 text-right font-bold text-rose-600">{formatCurrency(exp.allocated_share)}</td>
+                          {contributingBills.map((b, idx) => (
+                            <tr key={b.id || idx} className="hover:bg-slate-50/60 transition">
+                              <td className="py-2.5 px-3 sm:px-4 text-slate-500 whitespace-nowrap font-medium">
+                                {formatDateIN(b.date)}
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-800">
+                                <div>{b.title}</div>
+                                {b.category && (
+                                  <span className="text-[10px] font-normal text-slate-400 block">
+                                    {b.category}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-right text-slate-600 whitespace-nowrap">
+                                {formatCurrency(b.total_bill)}
+                              </td>
+                              <td className="py-2.5 px-3 font-medium whitespace-nowrap">
+                                <span
+                                  className={
+                                    b.paid_by_name === t.receiver_name
+                                      ? 'text-emerald-700 font-semibold'
+                                      : 'text-indigo-600 font-semibold'
+                                  }
+                                >
+                                  {b.paid_by_name}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold text-rose-600 whitespace-nowrap">
+                                {formatCurrency(b.payer_share)}
+                              </td>
+                              <td className="py-2.5 px-3 sm:px-4 text-slate-600 text-[11px] leading-tight min-w-[180px]">
+                                {b.explanation}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
+                        <tfoot className="bg-slate-50/90 font-bold border-t border-slate-200">
+                          <tr>
+                            <td colSpan="4" className="py-2.5 px-3 sm:px-4 text-slate-700 uppercase text-[10px]">
+                              Total Contributing Expense Shares:
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-rose-700 font-black">
+                              {formatCurrency(breakdown.contributingBillsTotal)}
+                            </td>
+                            <td className="py-2.5 px-3 sm:px-4 text-xs font-semibold text-slate-500">
+                              {isBillsTotalDifferent ? (
+                                <span className="text-amber-700 font-medium text-[11px]">
+                                  Adjusted to {formatCurrency(t.amount)} via Section C below
+                                </span>
+                              ) : (
+                                <span className="text-emerald-700 font-medium text-[11px]">
+                                  Matches transfer amount exactly
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        </tfoot>
                       </table>
                     </div>
                   )}
-                </div>
-              )}
 
-              {detailsTab === 'payer_participated' && (
-                <div className="space-y-2">
-                  <p className="text-[11px] text-slate-500">
-                    Complete list of all shared expenses <strong>{viewingTransferDetails.payer_name}</strong> participated in this month:
-                  </p>
-                  <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px] sticky top-0">
-                        <tr>
-                          <th className="py-2.5 px-3">Date</th>
-                          <th className="py-2.5 px-3">Expense</th>
-                          <th className="py-2.5 px-3">Paid By</th>
-                          <th className="py-2.5 px-3 text-right">Total</th>
-                          <th className="py-2.5 px-3 text-right">My Share</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {viewingTransferDetails.allPayerParticipatedExpenses?.map((exp) => (
-                          <tr key={exp.id} className="hover:bg-slate-50/50">
-                            <td className="py-2 px-3 text-slate-500 whitespace-nowrap">{formatDateIN(exp.date)}</td>
-                            <td className="py-2 px-3 font-medium text-slate-800">{exp.title}</td>
-                            <td className="py-2 px-3 text-indigo-600 font-medium">{exp.payer_name}</td>
-                            <td className="py-2 px-3 text-right text-slate-600">{formatCurrency(exp.total_bill)}</td>
-                            <td className="py-2 px-3 text-right font-bold text-rose-600">{formatCurrency(exp.allocated_share)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  {isBillsTotalDifferent && (
+                    <div className="p-3 bg-amber-50/70 border-t border-amber-100 text-xs text-amber-900 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <p>
+                        <strong>Distinction Note:</strong> The total of contributing bills above is{' '}
+                        <strong>{formatCurrency(breakdown.contributingBillsTotal)}</strong>. The final transfer amount is{' '}
+                        <strong>{formatCurrency(t.amount)}</strong> because {t.payer_name} also paid for shared expenses
+                        and third-party balances were consolidated in the settlement. See the full calculation in Section C below.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION C — How the Final Amount Is Calculated */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 space-y-5">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-indigo-600" />
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                          Section C — How the Final Amount Is Calculated
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          Step-by-step settlement calculation using actual application data.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step 1: Individual Balance Breakdown */}
+                  <div className="space-y-2">
+                    <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Step 1: {t.payer_name}'s Overall Balance Position
+                    </h5>
+                    <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/70 space-y-2 text-xs">
+                      <div className="flex justify-between items-center py-1 border-b border-slate-200/50">
+                        <span className="text-slate-600">
+                          1. Total amount paid by {t.payer_name}:
+                        </span>
+                        <span className="font-bold text-slate-800">
+                          {formatCurrency(stepCalc.payerTotalPaid || 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center py-1 border-b border-slate-200/50">
+                        <span className="text-slate-600">
+                          2. Total personal share of expenses:
+                        </span>
+                        <span className="font-bold text-rose-700">
+                          {formatCurrency(stepCalc.payerActualShare || 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center py-1 border-b border-slate-200/50">
+                        <span className="text-slate-700 font-semibold">
+                          3. Net balance = Amount Paid − Personal Share:
+                        </span>
+                        <span
+                          className={`font-mono font-bold ${
+                            stepCalc.payerNetBalance < 0 ? 'text-rose-700' : 'text-emerald-700'
+                          }`}
+                        >
+                          {formatCurrency(stepCalc.payerTotalPaid || 0)} − {formatCurrency(stepCalc.payerActualShare || 0)} = {formatCurrency(stepCalc.payerNetBalance || 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-1">
+                        <span className="text-slate-600">
+                          4. Balance status:
+                        </span>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                            stepCalc.payerNetBalance < 0
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          }`}
+                        >
+                          {stepCalc.payerStatusText ||
+                            (stepCalc.payerNetBalance < 0
+                              ? `${t.payer_name} owes ${formatCurrency(Math.abs(stepCalc.payerNetBalance))}`
+                              : `${t.payer_name} receives ${formatCurrency(stepCalc.payerNetBalance)}`)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step 2: Settlement & Third-Party Adjustments Breakdown */}
+                  <div className="space-y-2">
+                    <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Step 2: Settlement Adjustments & Optimized Transfer
+                    </h5>
+
+                    <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/70 space-y-2.5 text-xs">
+                      {/* Initial Amount Owed */}
+                      <div className="flex justify-between items-center py-1 border-b border-slate-200/60 font-semibold text-slate-800">
+                        <span>{stepCalc.initialAmountOwedLabel || 'Initial amount owed'}:</span>
+                        <span>{formatCurrency(stepCalc.initialAmountOwed || 0)}</span>
+                      </div>
+
+                      {/* Offset for bills payer paid for receiver */}
+                      {stepCalc.directOffsetAmount > 0 && (
+                        <div className="space-y-1.5 py-1 border-b border-slate-200/60">
+                          <div className="flex justify-between items-center text-emerald-800 font-medium">
+                            <span>
+                              Less: Offset for bills paid by {t.payer_name} shared by {t.receiver_name}:
+                            </span>
+                            <span className="font-bold text-emerald-700">
+                              −{formatCurrency(stepCalc.directOffsetAmount)}
+                            </span>
+                          </div>
+
+                          {/* Toggle to inspect offset bills */}
+                          {stepCalc.directOffsetBills?.length > 0 && (
+                            <div>
+                              <button
+                                onClick={() => setShowOffsetBills((prev) => !prev)}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 transition"
+                              >
+                                {showOffsetBills ? (
+                                  <>
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                    <span>Hide {stepCalc.directOffsetBills.length} offsetting bills paid by {t.payer_name}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                    <span>View {stepCalc.directOffsetBills.length} offsetting bills paid by {t.payer_name} (−{formatCurrency(stepCalc.directOffsetAmount)})</span>
+                                  </>
+                                )}
+                              </button>
+
+                              {showOffsetBills && (
+                                <div className="mt-2 border border-slate-200 rounded-lg overflow-hidden bg-white">
+                                  <table className="w-full text-left text-[11px]">
+                                    <thead className="bg-slate-100/70 text-slate-500 uppercase text-[9px] font-bold">
+                                      <tr>
+                                        <th className="py-1.5 px-2.5">Date</th>
+                                        <th className="py-1.5 px-2">Expense</th>
+                                        <th className="py-1.5 px-2 text-right">Total Bill</th>
+                                        <th className="py-1.5 px-2.5 text-right">{t.receiver_name}'s Share</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                      {stepCalc.directOffsetBills.map((ob, idx) => (
+                                        <tr key={ob.id || idx}>
+                                          <td className="py-1.5 px-2.5 text-slate-500">{formatDateIN(ob.date)}</td>
+                                          <td className="py-1.5 px-2 font-medium text-slate-800">{ob.title}</td>
+                                          <td className="py-1.5 px-2 text-right text-slate-600">{formatCurrency(ob.total_bill)}</td>
+                                          <td className="py-1.5 px-2.5 text-right font-bold text-emerald-700">
+                                            {formatCurrency(ob.receiver_share)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="flex justify-between items-center text-slate-600 text-[11px] pt-0.5">
+                            <span>Direct pairwise net balance ({t.payer_name} ↔ {t.receiver_name}):</span>
+                            <span className="font-semibold text-slate-800">
+                              {formatCurrency(stepCalc.directNetDebt || 0)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Third Party Adjustments */}
+                      {stepCalc.thirdPartyAdjustments?.map((adj, idx) => (
+                        <div
+                          key={adj.member_id || idx}
+                          className="p-2.5 bg-white rounded-lg border border-slate-200/80 space-y-1"
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className="font-semibold text-slate-800">
+                              {adj.type === 'less' ? 'Less: ' : 'Add: '}
+                              {adj.label}
+                            </span>
+                            <span
+                              className={`font-bold ${
+                                adj.type === 'less' ? 'text-emerald-700' : 'text-rose-700'
+                              }`}
+                            >
+                              {adj.type === 'less' ? '−' : '+'}
+                              {formatCurrency(adj.amount)}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 leading-normal">
+                            {adj.description}
+                          </p>
+                        </div>
+                      ))}
+
+                      {/* Final Transfer Summary Box */}
+                      <div className="p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-indigo-50/60 rounded-xl border border-indigo-200 mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 block">
+                            Final Recommended Transfer
+                          </span>
+                          <span className="font-bold text-slate-900 text-sm">
+                            {t.payer_name} transfers to {t.receiver_name}
+                          </span>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Fully settles {t.payer_name}'s balance and accounts for all participants' shares.
+                          </p>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="text-2xl font-black text-indigo-700">
+                            {formatCurrency(t.amount)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              )}
+              </div>
 
-              {detailsTab === 'payer_paid' && (
-                <div className="space-y-2">
-                  <p className="text-[11px] text-slate-500">
-                    Expenses paid by <strong>{viewingTransferDetails.payer_name}</strong> this month (which lowered their debt):
-                  </p>
-                  {viewingTransferDetails.allPayerPaidExpenses?.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
-                      {viewingTransferDetails.payer_name} did not pay for any shared expenses this month.
-                    </div>
-                  ) : (
-                    <div className="border border-slate-200 rounded-xl overflow-hidden">
-                      <table className="w-full text-left text-xs">
-                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold text-[10px]">
-                          <tr>
-                            <th className="py-2.5 px-3">Date</th>
-                            <th className="py-2.5 px-3">Expense Title</th>
-                            <th className="py-2.5 px-3">Category</th>
-                            <th className="py-2.5 px-3 text-right">Amount Paid</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {viewingTransferDetails.allPayerPaidExpenses.map((exp) => (
-                            <tr key={exp.id} className="hover:bg-slate-50/50">
-                              <td className="py-2 px-3 text-slate-500 whitespace-nowrap">{formatDateIN(exp.date)}</td>
-                              <td className="py-2 px-3 font-medium text-slate-800">{exp.title}</td>
-                              <td className="py-2 px-3 text-slate-500">{exp.category}</td>
-                              <td className="py-2 px-3 text-right font-bold text-emerald-600">{formatCurrency(exp.amount)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+              {/* Modal Footer Actions */}
+              <div className="p-4 sm:p-5 border-t border-slate-100 flex items-center justify-between gap-3 bg-slate-50/50">
+                <button
+                  onClick={() => setViewingTransferDetails(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl transition"
+                >
+                  Close
+                </button>
 
-            {/* Modal Footer Actions */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
-              <button
-                onClick={() => setViewingTransferDetails(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
-              >
-                Close
-              </button>
-
-              <button
-                onClick={() => {
-                  handleOpenSettleModal(viewingTransferDetails);
-                }}
-                className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Proceed to Mark as Paid</span>
-              </button>
+                <button
+                  onClick={() => {
+                    handleOpenSettleModal(viewingTransferDetails);
+                  }}
+                  className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Proceed to Mark as Paid</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Mark Transfer as Paid Modal */}
       {settlingTransfer && (
