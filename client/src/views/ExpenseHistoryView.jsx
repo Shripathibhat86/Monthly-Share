@@ -14,7 +14,12 @@ import {
   AlertTriangle,
   ShieldCheck,
   X,
-  ExternalLink
+  ExternalLink,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  RotateCw,
+  Loader2
 } from 'lucide-react';
 import { formatCurrency, formatDateIN, getMonthName } from '../utils/formatters';
 import { api } from '../services/api';
@@ -52,6 +57,43 @@ export function ExpenseHistoryView({
   const [sortBy, setSortBy] = useState('date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [viewingExpense, setViewingExpense] = useState(null);
+  const [viewingReceipt, setViewingReceipt] = useState(null);
+  const [isLoadingReceipt, setIsLoadingReceipt] = useState(false);
+  const [receiptZoom, setReceiptZoom] = useState(1);
+  const [receiptRotation, setReceiptRotation] = useState(0);
+
+  const fetchFullExpenseIfNeeded = async (exp) => {
+    if (!exp) return exp;
+    if (exp.receipt_data || (!exp.has_receipt && !exp.receipt_filename)) {
+      return exp;
+    }
+    try {
+      setIsLoadingReceipt(true);
+      const full = await api.getExpense(exp.id);
+      exp.receipt_data = full.receipt_data;
+      exp.receipt_filename = full.receipt_filename;
+      return { ...exp, ...full };
+    } catch (err) {
+      console.error('Failed to load full expense with receipt:', err);
+      return exp;
+    } finally {
+      setIsLoadingReceipt(false);
+    }
+  };
+
+  const handleOpenExpenseDetails = async (exp) => {
+    setViewingExpense(exp);
+    const full = await fetchFullExpenseIfNeeded(exp);
+    setViewingExpense(full);
+  };
+
+  const handleOpenReceipt = async (exp) => {
+    setViewingReceipt(exp);
+    setReceiptZoom(1);
+    setReceiptRotation(0);
+    const full = await fetchFullExpenseIfNeeded(exp);
+    setViewingReceipt(full);
+  };
 
   // Delete All state
   const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
@@ -431,8 +473,9 @@ export function ExpenseHistoryView({
                     <div>
                       {exp.has_receipt || exp.receipt_data ? (
                         <button
-                          onClick={() => setViewingExpense(exp)}
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[11px] font-semibold"
+                          onClick={() => handleOpenReceipt(exp)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 active:scale-95 rounded-lg text-xs font-semibold transition"
+                          title="View Attached Receipt"
                         >
                           <FileText className="w-3.5 h-3.5" />
                           <span>Receipt</span>
@@ -444,7 +487,7 @@ export function ExpenseHistoryView({
 
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => setViewingExpense(exp)}
+                        onClick={() => handleOpenExpenseDetails(exp)}
                         className="p-2 text-slate-500 hover:text-indigo-600 active:scale-95 bg-slate-50 rounded-lg transition"
                         title="View Details"
                         aria-label="View Details"
@@ -523,9 +566,10 @@ export function ExpenseHistoryView({
                       <td className="py-3.5 px-4 text-center">
                         {exp.has_receipt || exp.receipt_data ? (
                           <button
-                            onClick={() => setViewingExpense(exp)}
-                            className="p-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition"
-                            title="View Receipt"
+                            onClick={() => handleOpenReceipt(exp)}
+                            className="p-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:scale-105 rounded-lg transition"
+                            title="View Attached Receipt"
+                            aria-label="View Attached Receipt"
                           >
                             <FileText className="w-4 h-4" />
                           </button>
@@ -536,9 +580,10 @@ export function ExpenseHistoryView({
                       <td className="py-3.5 px-4 sm:px-6 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => setViewingExpense(exp)}
+                            onClick={() => handleOpenExpenseDetails(exp)}
                             className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
                             title="View Details"
+                            aria-label="View Details"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
@@ -644,33 +689,102 @@ export function ExpenseHistoryView({
               )}
 
               {/* Receipt preview if available */}
-              {viewingExpense.receipt_data && (
-                <div>
-                  <h4 className="text-xs font-bold text-slate-700 mb-2">Receipt Attachment:</h4>
-                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-2">
-                    {viewingExpense.receipt_data.startsWith('data:image/') ? (
-                      <img
-                        src={viewingExpense.receipt_data}
-                        alt="Receipt"
-                        className="max-h-64 mx-auto object-contain rounded-lg"
-                      />
-                    ) : (
-                      <div className="p-4 text-center">
-                        <FileText className="w-8 h-8 text-indigo-600 mx-auto mb-2" />
-                        <span className="text-xs text-slate-600 font-medium block">
-                          PDF Document Attached
-                        </span>
-                        <a
-                          href={viewingExpense.receipt_data}
-                          download={viewingExpense.receipt_filename || 'receipt.pdf'}
-                          className="mt-2 inline-flex items-center gap-1 text-xs text-indigo-600 font-bold hover:underline"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Download File</span>
-                        </a>
-                      </div>
+              {(viewingExpense.has_receipt || viewingExpense.receipt_data || viewingExpense.receipt_filename) ? (
+                <div className="pt-2 border-t border-slate-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-indigo-600" />
+                      <h4 className="text-xs font-bold text-slate-800">Receipt Attachment</h4>
+                    </div>
+                    {viewingExpense.receipt_filename && (
+                      <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-2 py-0.5 rounded-md truncate max-w-[200px]" title={viewingExpense.receipt_filename}>
+                        {viewingExpense.receipt_filename}
+                      </span>
                     )}
                   </div>
+
+                  {isLoadingReceipt && !viewingExpense.receipt_data ? (
+                    <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-xl">
+                      <Loader2 className="w-6 h-6 text-indigo-600 animate-spin mx-auto mb-2" />
+                      <span className="text-xs text-slate-500 font-medium">Loading receipt attachment...</span>
+                    </div>
+                  ) : viewingExpense.receipt_data || viewingExpense.has_receipt ? (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50 p-2.5 space-y-2">
+                      {/* Check if image or pdf */}
+                      {!(viewingExpense.receipt_filename?.toLowerCase().endsWith('.pdf')) && (viewingExpense.receipt_data?.startsWith('data:image/') || !viewingExpense.receipt_data) ? (
+                        <div
+                          className="relative group cursor-pointer"
+                          onClick={() => handleOpenReceipt(viewingExpense)}
+                          title="Click to view full size and zoom"
+                        >
+                          <div className="max-h-72 w-full overflow-hidden rounded-lg bg-slate-900/5 flex items-center justify-center p-1">
+                            <img
+                              src={viewingExpense.receipt_data || api.getReceiptUrl(viewingExpense.id)}
+                              alt="Receipt"
+                              className="max-h-72 w-auto max-w-full object-contain rounded-lg transition duration-200 group-hover:scale-[1.02]"
+                            />
+                          </div>
+                          <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition rounded-lg flex items-center justify-center gap-2 text-white pointer-events-none">
+                            <span className="text-xs font-bold px-3 py-1.5 bg-black/60 backdrop-blur-xs rounded-lg flex items-center gap-1.5 shadow-sm">
+                              <Maximize2 className="w-3.5 h-3.5" />
+                              Click to Enlarge / Zoom
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-6 text-center bg-white rounded-lg border border-slate-200">
+                          <FileText className="w-10 h-10 text-indigo-600 mx-auto mb-2" />
+                          <span className="text-xs text-slate-700 font-bold block mb-1">
+                            PDF Document Attached
+                          </span>
+                          <span className="text-[11px] text-slate-400 block font-mono">
+                            {viewingExpense.receipt_filename || 'receipt.pdf'}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Action buttons below preview */}
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenReceipt(viewingExpense)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-semibold transition"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5" />
+                          <span>View Full Screen</span>
+                        </button>
+
+                        <div className="flex items-center gap-1.5">
+                          <a
+                            href={api.getReceiptUrl(viewingExpense.id)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition"
+                            title="Open in New Tab"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                          <a
+                            href={api.getReceiptUrl(viewingExpense.id, true)}
+                            download={viewingExpense.receipt_filename || `receipt-${viewingExpense.id}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition"
+                            title="Download Receipt"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Download</span>
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+                      Receipt attachment could not be loaded.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="pt-2 border-t border-slate-100 text-xs text-slate-400">
+                  No receipt attached for this expense.
                 </div>
               )}
             </div>
@@ -679,6 +793,164 @@ export function ExpenseHistoryView({
               <button
                 onClick={() => setViewingExpense(null)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FULL-SCREEN / LIGHTBOX RECEIPT VIEWER MODAL (Desktop & Mobile) */}
+      {viewingReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in no-print">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full max-h-[96vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="p-3 sm:p-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/70">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-slate-800 text-sm sm:text-base truncate">
+                    {viewingReceipt.title}
+                  </h3>
+                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                    {formatCurrency(viewingReceipt.amount)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                  {formatDateIN(viewingReceipt.date)} • Paid by <strong className="text-slate-700">{viewingReceipt.payer_name}</strong>
+                  {viewingReceipt.receipt_filename && (
+                    <span className="font-mono text-[10px] text-slate-400 ml-2 hidden sm:inline">
+                      ({viewingReceipt.receipt_filename})
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Action Toolbar */}
+              <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+                {/* Zoom Controls (Images only) */}
+                {!(viewingReceipt.receipt_filename?.toLowerCase().endsWith('.pdf')) && (
+                  <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200">
+                    <button
+                      onClick={() => setReceiptZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                      className="p-1.5 text-slate-600 hover:text-indigo-600 rounded-lg transition"
+                      title="Zoom Out"
+                      aria-label="Zoom Out"
+                    >
+                      <ZoomOut className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setReceiptZoom(1)}
+                      className="px-2 py-1 text-[10px] font-bold font-mono text-slate-700 hover:text-indigo-600 transition"
+                      title="Reset Zoom to 100%"
+                    >
+                      {Math.round(receiptZoom * 100)}%
+                    </button>
+                    <button
+                      onClick={() => setReceiptZoom((z) => Math.min(3, Number((z + 0.25).toFixed(2))))}
+                      className="p-1.5 text-slate-600 hover:text-indigo-600 rounded-lg transition"
+                      title="Zoom In"
+                      aria-label="Zoom In"
+                    >
+                      <ZoomIn className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setReceiptRotation((r) => (r + 90) % 360)}
+                      className="p-1.5 text-slate-600 hover:text-indigo-600 border-l border-slate-200 rounded-r-lg transition"
+                      title="Rotate 90°"
+                      aria-label="Rotate"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Open in New Tab */}
+                <a
+                  href={api.getReceiptUrl(viewingReceipt.id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition"
+                  title="Open Full Image in New Tab"
+                  aria-label="Open in New Tab"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+
+                {/* Download Button */}
+                <a
+                  href={api.getReceiptUrl(viewingReceipt.id, true)}
+                  download={viewingReceipt.receipt_filename || `receipt-${viewingReceipt.id}`}
+                  className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition"
+                  title="Download Original Receipt"
+                  aria-label="Download"
+                >
+                  <Download className="w-4 h-4" />
+                </a>
+
+                {/* Close Button */}
+                <button
+                  onClick={() => setViewingReceipt(null)}
+                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition ml-1"
+                  aria-label="Close Receipt Viewer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Viewer Body */}
+            <div className="flex-1 overflow-auto p-3 sm:p-6 bg-slate-900/5 flex items-center justify-center min-h-[50vh] sm:min-h-[60vh] relative">
+              {isLoadingReceipt && !viewingReceipt.receipt_data ? (
+                <div className="text-center p-8">
+                  <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-3" />
+                  <p className="text-sm font-semibold text-slate-700">Loading receipt attachment...</p>
+                  <p className="text-xs text-slate-400 mt-1">Please wait while the image is retrieved</p>
+                </div>
+              ) : viewingReceipt.receipt_filename?.toLowerCase().endsWith('.pdf') ? (
+                <div className="w-full h-full flex flex-col items-center justify-center p-4">
+                  <iframe
+                    src={api.getReceiptUrl(viewingReceipt.id)}
+                    className="w-full h-[65vh] rounded-xl border border-slate-200 bg-white shadow-xs"
+                    title="PDF Receipt"
+                  />
+                </div>
+              ) : (
+                <div
+                  className="flex items-center justify-center w-full h-full overflow-auto cursor-zoom-in"
+                  onClick={() => setReceiptZoom((z) => (z === 1 ? 1.75 : 1))}
+                  title="Click to toggle zoom"
+                >
+                  <img
+                    src={viewingReceipt.receipt_data || api.getReceiptUrl(viewingReceipt.id)}
+                    alt={`Receipt for ${viewingReceipt.title}`}
+                    style={{
+                      transform: `scale(${receiptZoom}) rotate(${receiptRotation}deg)`,
+                      transformOrigin: 'center center',
+                      transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)'
+                    }}
+                    className="max-h-[70vh] sm:max-h-[75vh] w-auto max-w-full object-contain rounded-lg shadow-md select-none pointer-events-auto"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-3 sm:p-4 border-t border-slate-100 flex items-center justify-between gap-3 bg-white">
+              <button
+                onClick={() => {
+                  setViewingExpense(viewingReceipt);
+                  setViewingReceipt(null);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>View Full Expense Details</span>
+              </button>
+
+              <button
+                onClick={() => setViewingReceipt(null)}
+                className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition"
               >
                 Close
               </button>

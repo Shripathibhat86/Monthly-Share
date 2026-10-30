@@ -102,9 +102,17 @@ export function App() {
     requestPin({
       title: 'Edit Expense Authorization',
       message: `Please enter member PIN / password to edit "${expense.title}".`,
-      onConfirm: ({ memberId, pin }) => {
+      onConfirm: async ({ memberId, pin }) => {
+        let fullExpense = expense;
+        if (!expense.receipt_data && (expense.has_receipt || expense.receipt_filename)) {
+          try {
+            fullExpense = await api.getExpense(expense.id);
+          } catch (e) {
+            console.error('Failed to fetch full expense details for edit:', e);
+          }
+        }
         setEditingExpense({
-          ...expense,
+          ...fullExpense,
           authData: { memberId, pin }
         });
         setActiveTab('add-expense');

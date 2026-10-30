@@ -40,6 +40,7 @@ export const api = {
     return request(`/expenses${qStr ? `?${qStr}` : ''}`);
   },
   getExpense: (id) => request(`/expenses/${id}`),
+  getReceiptUrl: (id, download = false) => `${BASE_URL}/expenses/${id}/receipt${download ? '?download=1' : ''}`,
   createExpense: (payload) => request('/expenses', { method: 'POST', body: JSON.stringify(payload) }),
   updateExpense: (id, payload) => request(`/expenses/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteExpense: (id, payload) => request(`/expenses/${id}`, { method: 'DELETE', body: JSON.stringify(payload) }),

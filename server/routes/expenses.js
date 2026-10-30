@@ -143,6 +143,52 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET raw receipt attachment for an expense (image or PDF)
+router.get('/:id/receipt', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { download } = req.query;
+
+    const expRes = await query(
+      `SELECT receipt_data, receipt_filename, title FROM expenses WHERE id = ?`,
+      [id]
+    );
+
+    if (expRes.rows.length === 0) {
+      return res.status(404).send('Expense not found');
+    }
+
+    const { receipt_data, receipt_filename, title } = expRes.rows[0];
+
+    if (!receipt_data) {
+      return res.status(404).send('No receipt attached to this expense');
+    }
+
+    const safeFilename = receipt_filename || `receipt-${id}.png`;
+
+    const matches = receipt_data.match(/^data:([^;]+);base64,(.+)$/);
+    if (matches) {
+      const contentType = matches[1];
+      const buffer = Buffer.from(matches[2], 'base64');
+
+      res.setHeader('Content-Type', contentType);
+      const disposition = download ? 'attachment' : 'inline';
+      res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(safeFilename)}"`);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(buffer);
+    }
+
+    if (receipt_data.startsWith('http://') || receipt_data.startsWith('https://')) {
+      return res.redirect(receipt_data);
+    }
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(receipt_data);
+  } catch (err) {
+    res.status(500).send(`Error retrieving receipt: ${err.message}`);
+  }
+});
+
 // POST create expense (Protected with Password / PIN)
 router.post('/', async (req, res) => {
   try {
