@@ -9,13 +9,16 @@ import {
 
 const router = Router();
 
-// Helper to normalize dates to YYYY-MM-DD
 function normalizeDate(d) {
   if (!d) return new Date().toISOString().slice(0, 10);
-  // If DD-MM-YYYY
-  if (/^\d{2}-\d{2}-\d{4}$/.test(d)) {
-    const [day, month, year] = d.split('-');
-    return `${year}-${month}-${day}`;
+  if (typeof d === 'string') {
+    const dmy = d.trim().match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (dmy) {
+      const day = dmy[1].padStart(2, '0');
+      const month = dmy[2].padStart(2, '0');
+      const year = dmy[3];
+      return `${year}-${month}-${day}`;
+    }
   }
   return d;
 }
@@ -298,6 +301,121 @@ router.post('/', async (req, res) => {
       success: true,
       expenseId,
       message: 'Expense recorded successfully'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST batch import expenses (from Excel / CSV)
+router.post('/import', async (req, res) => {
+  try {
+    const {
+      expenses: importList,
+      authorizing_member_id,
+      pin,
+      authorizing_pin
+    } = req.body;
+
+    const checkPin = authorizing_pin || pin;
+    if (!checkPin || !authorizing_member_id) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to import expenses' });
+    }
+
+    const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
+    if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== checkPin.toString().trim()) {
+      return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
+    }
+
+    if (!Array.isArray(importList) || importList.length === 0) {
+      return res.status(400).json({ error: 'No expenses provided in import list' });
+    }
+
+    const membersRes = await query('SELECT id, name FROM members');
+    const allMembers = membersRes.rows;
+    const allMemberIds = allMembers.map(m => m.id);
+
+    let importedCount = 0;
+    const insertedIds = [];
+
+    for (const item of importList) {
+      const {
+        title,
+        date,
+        category,
+        amount,
+        paid_by_member_id,
+        split_method = 'equal',
+        participants = [],
+        notes
+      } = item;
+
+      if (!title || !title.trim()) continue;
+      const numAmount = Number(amount);
+      if (isNaN(numAmount) || numAmount <= 0) continue;
+      if (!paid_by_member_id) continue;
+
+      const payerId = Number(paid_by_member_id);
+      const formattedDate = normalizeDate(date);
+
+      // Determine participant IDs
+      let pIds = Array.isArray(participants) && participants.length > 0
+        ? participants.map(p => Number(typeof p === 'object' ? p.member_id : p)).filter(id => !isNaN(id))
+        : allMemberIds;
+
+      if (pIds.length === 0) {
+        pIds = allMemberIds;
+      }
+
+      // Calculate allocations
+      let allocations = [];
+      if (split_method === 'equal') {
+        allocations = calculateEqualSplit(numAmount, pIds, payerId);
+      } else if (split_method === 'custom' && Array.isArray(participants) && typeof participants[0] === 'object') {
+        allocations = validateCustomSplit(numAmount, participants);
+      } else {
+        allocations = calculateEqualSplit(numAmount, pIds, payerId);
+      }
+
+      const insertExp = await query(
+        `INSERT INTO expenses 
+         (title, date, category, amount, paid_by_member_id, split_method, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          title.trim(),
+          formattedDate,
+          category || 'Other',
+          numAmount,
+          payerId,
+          split_method || 'equal',
+          notes ? notes.trim() : null
+        ]
+      );
+
+      let expenseId = insertExp.lastInsertRowid;
+      if (!expenseId || isNaN(expenseId)) {
+        const lastExp = await query('SELECT MAX(id) as id FROM expenses');
+        expenseId = lastExp.rows[0]?.id;
+      }
+
+      if (expenseId) {
+        insertedIds.push(expenseId);
+        for (const alloc of allocations) {
+          await query(
+            `INSERT INTO expense_participants (expense_id, member_id, allocated_amount, split_value)
+             VALUES (?, ?, ?, ?)`,
+            [expenseId, alloc.member_id, alloc.allocated_amount, alloc.split_value || null]
+          );
+        }
+        importedCount++;
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully imported ${importedCount} expenses!`,
+      importedCount,
+      insertedIds
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

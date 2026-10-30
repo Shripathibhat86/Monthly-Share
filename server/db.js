@@ -135,16 +135,16 @@ export async function initDb() {
         INSERT INTO members (name, role, pin) VALUES 
         ('Shripathi', 'regular', '1996'),
         ('Niranth', 'regular', '1999'),
-        ('Sharath', 'regular', '1997'),
-        ('Vatsa', 'occasional', '9960');
+        ('Sharath', 'occasional', '1997'),
+        ('Vatsa', 'occasional', '1996');
       `);
     } else {
       // Migrate / ensure custom member names and PINs
       await pgPool.query(`
-        UPDATE members SET name = 'Shripathi', pin = '1996' WHERE id = 1 AND (name = 'User1' OR name = 'Shripathi');
-        UPDATE members SET name = 'Niranth', pin = '1999' WHERE id = 2 AND (name = 'User2' OR name = 'Niranth');
-        UPDATE members SET name = 'Sharath', pin = '1997' WHERE id = 3 AND (name = 'User3' OR name = 'Sharath');
-        UPDATE members SET name = 'Vatsa', pin = '9960' WHERE id = 4 AND (name = 'User4' OR name = 'Vatsa');
+        UPDATE members SET name = 'Shripathi', pin = '1996' WHERE (name = 'User1' OR name = 'Shripathi');
+        UPDATE members SET name = 'Niranth', pin = '1999' WHERE (name = 'User2' OR name = 'Niranth');
+        UPDATE members SET name = 'Sharath', pin = '1997' WHERE (name = 'User3' OR name = 'Sharath');
+        UPDATE members SET name = 'Vatsa', pin = '1996' WHERE (name = 'User4' OR name = 'Vatsa');
       `);
     }
   } else {
@@ -203,14 +203,14 @@ export async function initDb() {
       const insert = sqliteDb.prepare('INSERT INTO members (name, role, pin) VALUES (?, ?, ?)');
       insert.run('Shripathi', 'regular', '1996');
       insert.run('Niranth', 'regular', '1999');
-      insert.run('Sharath', 'regular', '1997');
-      insert.run('Vatsa', 'occasional', '9960');
+      insert.run('Sharath', 'occasional', '1997');
+      insert.run('Vatsa', 'occasional', '1996');
     } else {
       // Migrate / ensure custom member names and PINs
-      sqliteDb.prepare("UPDATE members SET name = 'Shripathi', pin = '1996' WHERE id = 1 AND (name = 'User1' OR name = 'Shripathi')").run();
-      sqliteDb.prepare("UPDATE members SET name = 'Niranth', pin = '1999' WHERE id = 2 AND (name = 'User2' OR name = 'Niranth')").run();
-      sqliteDb.prepare("UPDATE members SET name = 'Sharath', pin = '1997' WHERE id = 3 AND (name = 'User3' OR name = 'Sharath')").run();
-      sqliteDb.prepare("UPDATE members SET name = 'Vatsa', pin = '9960' WHERE id = 4 AND (name = 'User4' OR name = 'Vatsa')").run();
+      sqliteDb.prepare("UPDATE members SET name = 'Shripathi', pin = '1996' WHERE (name = 'User1' OR name = 'Shripathi')").run();
+      sqliteDb.prepare("UPDATE members SET name = 'Niranth', pin = '1999' WHERE (name = 'User2' OR name = 'Niranth')").run();
+      sqliteDb.prepare("UPDATE members SET name = 'Sharath', pin = '1997' WHERE (name = 'User3' OR name = 'Sharath')").run();
+      sqliteDb.prepare("UPDATE members SET name = 'Vatsa', pin = '1996' WHERE (name = 'User4' OR name = 'Vatsa')").run();
     }
   }
   console.log(`Database initialized successfully (${isPg ? 'Neon DB/PostgreSQL' : 'Local SQLite'}).`);

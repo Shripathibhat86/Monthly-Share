@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Search,
   Filter,
@@ -7,6 +7,7 @@ import {
   Trash2,
   Edit2,
   Eye,
+  EyeOff,
   FileText,
   Calendar,
   Users,
@@ -19,8 +20,15 @@ import {
   ZoomOut,
   Maximize2,
   RotateCw,
-  Loader2
+  Loader2,
+  FileSpreadsheet,
+  Upload,
+  CheckCircle2,
+  Check,
+  FileUp,
+  FileDown
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { formatCurrency, formatDateIN, getMonthName } from '../utils/formatters';
 import { api } from '../services/api';
 
@@ -103,6 +111,433 @@ export function ExpenseHistoryView({
   const [showDeleteAllPin, setShowDeleteAllPin] = useState(false);
   const [deleteAllError, setDeleteAllError] = useState('');
   const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  // Import from Excel / CSV state
+  const fileInputRef = useRef(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [parsedRows, setParsedRows] = useState([]);
+  const [isParsing, setIsParsing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [importAuthorizingMemberId, setImportAuthorizingMemberId] = useState(members[0]?.id || 1);
+  const [importPin, setImportPin] = useState('');
+  const [showImportPin, setShowImportPin] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  // Column matching helper
+  const findColumnKey = (row, aliases) => {
+    const keys = Object.keys(row);
+    // 1. Exact match (case/space/symbols stripped)
+    for (const alias of aliases) {
+      const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const found = keys.find(k => k.toLowerCase().trim().replace(/[^a-z0-9]/g, '') === cleanAlias);
+      if (found !== undefined) return row[found];
+    }
+    // 2. Starts with alias
+    for (const alias of aliases) {
+      const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const found = keys.find(k => k.toLowerCase().trim().replace(/[^a-z0-9]/g, '').startsWith(cleanAlias));
+      if (found !== undefined) return row[found];
+    }
+    // 3. Includes alias
+    for (const alias of aliases) {
+      const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const found = keys.find(k => k.toLowerCase().trim().replace(/[^a-z0-9]/g, '').includes(cleanAlias));
+      if (found !== undefined) return row[found];
+    }
+    return undefined;
+  };
+
+  // Date parsing helper
+  const parseExcelDateValue = (val) => {
+    if (!val) return new Date().toISOString().slice(0, 10);
+    if (val instanceof Date && !isNaN(val.getTime())) {
+      const y = val.getFullYear();
+      const m = String(val.getMonth() + 1).padStart(2, '0');
+      const d = String(val.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    if (typeof val === 'number') {
+      try {
+        const dateObj = XLSX.SSF.parse_date_code(val);
+        if (dateObj && dateObj.y && dateObj.m && dateObj.d) {
+          const y = dateObj.y;
+          const m = String(dateObj.m).padStart(2, '0');
+          const d = String(dateObj.d).padStart(2, '0');
+          return `${y}-${m}-${d}`;
+        }
+      } catch (err) {
+        console.warn('SSF date parse failed, falling back', err);
+      }
+    }
+    const str = String(val).trim();
+    // Check DD-MM-YYYY or DD/MM/YYYY
+    const dmyMatch = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (dmyMatch) {
+      const day = dmyMatch[1].padStart(2, '0');
+      const month = dmyMatch[2].padStart(2, '0');
+      const year = dmyMatch[3];
+      return `${year}-${month}-${day}`;
+    }
+    // Check YYYY-MM-DD or YYYY/MM/DD
+    const ymdMatch = str.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (ymdMatch) {
+      const year = ymdMatch[1];
+      const month = ymdMatch[2].padStart(2, '0');
+      const day = ymdMatch[3].padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return new Date().toISOString().slice(0, 10);
+  };
+
+  // Process selected file
+  const processImportFile = async (file) => {
+    const validExts = ['.xlsx', '.xls', '.csv'];
+    const lowerName = file.name.toLowerCase();
+    if (!validExts.some(ext => lowerName.endsWith(ext))) {
+      setImportError('Please upload a valid Excel (.xlsx, .xls) or CSV (.csv) file.');
+      return;
+    }
+
+    setIsParsing(true);
+    setImportError('');
+    setImportFile(file);
+    setParsedRows([]);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        throw new Error('The uploaded file does not contain any sheets');
+      }
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+      if (rawRows.length === 0) {
+        throw new Error('The selected sheet is empty or contains no data rows');
+      }
+
+      const parsed = rawRows.map((row, index) => {
+        const rawDate = findColumnKey(row, ['date', 'expense_date', 'bill_date']);
+        const rawTitle = findColumnKey(row, ['title', 'expense_title', 'description', 'particulars', 'item', 'item_name']);
+        const rawCategory = findColumnKey(row, ['category', 'expense_category', 'tag']);
+        const rawAmount = findColumnKey(row, ['amount', 'bill_amount', 'total_amount', 'cost', 'price', 'total']);
+        const rawPayer = findColumnKey(row, ['paid_by', 'paidby', 'payer', 'who_paid']);
+        const rawSplit = findColumnKey(row, ['split_method', 'split_type', 'split', 'method']);
+        const rawParticipants = findColumnKey(row, ['participants', 'members', 'shared_with', 'split_between']);
+        const rawNotes = findColumnKey(row, ['notes', 'note', 'remarks', 'comment', 'memo']);
+
+        const errors = [];
+        const warnings = [];
+
+        // 1. Date
+        let formattedDate = '';
+        try {
+          formattedDate = parseExcelDateValue(rawDate);
+        } catch {
+          formattedDate = new Date().toISOString().slice(0, 10);
+          warnings.push('Date missing/invalid; defaulted to today');
+        }
+
+        // 2. Title
+        const cleanTitle = String(rawTitle || '').trim();
+        if (!cleanTitle) {
+          errors.push('Missing expense title');
+        }
+
+        // 3. Amount
+        let numAmount = 0;
+        if (typeof rawAmount === 'number') {
+          numAmount = rawAmount;
+        } else if (rawAmount !== undefined && rawAmount !== null) {
+          const cleanAmt = String(rawAmount).replace(/[^0-9.-]/g, '');
+          numAmount = parseFloat(cleanAmt);
+        }
+        if (isNaN(numAmount) || numAmount <= 0) {
+          errors.push('Amount must be greater than 0');
+        }
+
+        // 4. Paid By member
+        let matchedPayer = null;
+        if (rawPayer !== undefined && rawPayer !== null && String(rawPayer).trim()) {
+          const strPayer = String(rawPayer).trim().toLowerCase();
+          matchedPayer = members.find(m =>
+            m.name.toLowerCase().trim() === strPayer ||
+            String(m.id) === strPayer
+          );
+          if (!matchedPayer) {
+            errors.push(`Unrecognized payer: "${rawPayer}"`);
+          }
+        } else {
+          errors.push('Missing "Paid By" person');
+        }
+
+        // 5. Category
+        let category = 'Other';
+        if (rawCategory && String(rawCategory).trim()) {
+          const strCat = String(rawCategory).trim();
+          const matchedCat = CATEGORIES.find(c => c.toLowerCase() === strCat.toLowerCase() && c !== 'All Categories');
+          category = matchedCat || strCat;
+        }
+
+        // 6. Split Method & Participants
+        const splitMethod = (String(rawSplit || '').trim().toLowerCase() === 'custom') ? 'custom' : 'equal';
+        let participantIds = [];
+        let participantNamesDisplay = 'All Members';
+
+        if (rawParticipants && String(rawParticipants).trim()) {
+          const strParts = String(rawParticipants).trim();
+          if (strParts.toLowerCase() !== 'all' && strParts.toLowerCase() !== 'everyone') {
+            const tokens = strParts
+              .split(/[;,/&]| and /i)
+              .map(s => s.replace(/\s*\([^)]*\)/g, '').trim())
+              .filter(Boolean);
+
+            const matchedIds = [];
+            const unknownTokens = [];
+
+            for (const token of tokens) {
+              const m = members.find(mem =>
+                mem.name.toLowerCase().trim() === token.toLowerCase() ||
+                String(mem.id) === token
+              );
+              if (m) {
+                if (!matchedIds.includes(m.id)) matchedIds.push(m.id);
+              } else {
+                unknownTokens.push(token);
+              }
+            }
+
+            if (unknownTokens.length > 0) {
+              warnings.push(`Unrecognized participant(s): ${unknownTokens.join(', ')}`);
+            }
+
+            if (matchedIds.length > 0) {
+              participantIds = matchedIds;
+              participantNamesDisplay = matchedIds
+                .map(id => members.find(m => m.id === id)?.name || id)
+                .join(', ');
+            } else {
+              participantIds = members.map(m => m.id);
+              warnings.push('Participants defaulted to all members');
+            }
+          } else {
+            participantIds = members.map(m => m.id);
+          }
+        } else {
+          participantIds = members.map(m => m.id);
+        }
+
+        const isValid = errors.length === 0;
+
+        return {
+          rowNum: index + 2,
+          selected: isValid,
+          isValid,
+          errors,
+          warnings,
+          title: cleanTitle,
+          date: formattedDate,
+          category,
+          amount: isNaN(numAmount) ? 0 : numAmount,
+          paid_by_member_id: matchedPayer?.id || null,
+          payer_name: matchedPayer?.name || String(rawPayer || ''),
+          split_method: splitMethod,
+          participants: participantIds,
+          participantNamesDisplay,
+          notes: String(rawNotes || '').trim()
+        };
+      });
+
+      // Filter out completely blank rows
+      const validOrMeaningful = parsed.filter(r => r.title || r.amount > 0 || r.payer_name);
+      if (validOrMeaningful.length === 0) {
+        throw new Error('No valid or readable expense rows found in the spreadsheet');
+      }
+
+      setParsedRows(validOrMeaningful);
+    } catch (err) {
+      setImportError(err.message || 'Failed to read file. Please verify it is a valid Excel (.xlsx, .xls) or CSV file.');
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processImportFile(file);
+    e.target.value = '';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processImportFile(file);
+    }
+  };
+
+  const toggleSelectRow = (rowNum) => {
+    setParsedRows(prev =>
+      prev.map(r => (r.rowNum === rowNum ? { ...r, selected: !r.selected } : r))
+    );
+  };
+
+  const toggleSelectAll = (select) => {
+    setParsedRows(prev =>
+      prev.map(r => (r.isValid ? { ...r, selected: select } : r))
+    );
+  };
+
+  // Sample template generator
+  const handleDownloadTemplate = (format = 'xlsx') => {
+    const memberNames = members.map(m => m.name).join(', ') || 'Shripathi, Niranth, Sharath, Vatsa';
+    const payer1 = members[0]?.name || 'Shripathi';
+    const payer2 = members[1]?.name || 'Sharath';
+    const payer3 = members[2]?.name || 'Vatsa';
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const sampleRows = [
+      {
+        'Date': todayStr,
+        'Title': 'Weekly Groceries & Vegetables',
+        'Category': 'Groceries',
+        'Amount': 1450.00,
+        'Paid By': payer1,
+        'Split Method': 'equal',
+        'Participants': memberNames,
+        'Notes': 'Bought from supermarket'
+      },
+      {
+        'Date': todayStr,
+        'Title': 'High-Speed Wi-Fi Bill',
+        'Category': 'Internet',
+        'Amount': 999.00,
+        'Paid By': payer2,
+        'Split Method': 'equal',
+        'Participants': 'All',
+        'Notes': 'Monthly broadband'
+      },
+      {
+        'Date': todayStr,
+        'Title': 'Dinner & Snacks',
+        'Category': 'Food and Dining',
+        'Amount': 1800.00,
+        'Paid By': payer3,
+        'Split Method': 'equal',
+        'Participants': `${payer1}, ${payer2}`,
+        'Notes': 'Shared between two members'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(sampleRows);
+    ws['!cols'] = [
+      { wch: 14 },
+      { wch: 32 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 36 },
+      { wch: 28 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
+
+    if (format === 'csv') {
+      XLSX.writeFile(wb, 'expense_import_template.csv', { bookType: 'csv' });
+    } else {
+      XLSX.writeFile(wb, 'expense_import_template.xlsx', { bookType: 'xlsx' });
+    }
+  };
+
+  // Submit batch import
+  const handleExecuteImport = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const selectedRows = parsedRows.filter(r => r.selected && r.isValid);
+    if (selectedRows.length === 0) {
+      setImportError('Please select at least one valid expense row to import');
+      return;
+    }
+    const cleanPin = importPin.trim();
+    if (!cleanPin) {
+      setImportError('Please enter your member Security PIN / Password to authorize the import');
+      return;
+    }
+    if (!importAuthorizingMemberId) {
+      setImportError('Please select an authorizing member');
+      return;
+    }
+
+    setIsImporting(true);
+    setImportError('');
+
+    try {
+      const payload = {
+        expenses: selectedRows.map(r => ({
+          title: r.title,
+          date: r.date,
+          category: r.category,
+          amount: r.amount,
+          paid_by_member_id: r.paid_by_member_id,
+          split_method: r.split_method,
+          participants: r.participants,
+          notes: r.notes
+        })),
+        authorizing_member_id: Number(importAuthorizingMemberId),
+        authorizing_pin: cleanPin
+      };
+
+      const result = await api.importExpenses(payload);
+
+      if (showToast) {
+        showToast({
+          type: 'success',
+          message: `Successfully imported ${result.count || selectedRows.length} expenses from ${importFile?.name || 'file'}!`
+        });
+      }
+
+      setIsImportModalOpen(false);
+      setParsedRows([]);
+      setImportFile(null);
+      setImportPin('');
+      setImportError('');
+
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err) {
+      setImportError(err.message || 'Import failed. Please check your PIN and try again.');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const validRowsCount = parsedRows.filter(r => r.isValid).length;
+  const invalidRowsCount = parsedRows.filter(r => !r.isValid).length;
+  const selectedValidRows = parsedRows.filter(r => r.isValid && r.selected);
+  const selectedValidCount = selectedValidRows.length;
+  const totalSelectedAmount = selectedValidRows.reduce((acc, r) => acc + (r.amount || 0), 0);
 
   const activeFilterCount = (selectedCategory !== 'All Categories' ? 1 : 0) +
     (selectedPayer ? 1 : 0) +
@@ -284,6 +719,25 @@ export function ExpenseHistoryView({
               <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" />
               <span className="hidden xs:inline">Export CSV</span>
               <span className="xs:hidden">CSV</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setIsImportModalOpen(true);
+                setImportFile(null);
+                setParsedRows([]);
+                setImportError('');
+                setImportPin('');
+                if (members.length > 0) {
+                  setImportAuthorizingMemberId(members[0].id);
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 rounded-xl transition touch-manipulation active:scale-95 shadow-xs"
+              title="Import Expenses from Excel (.xlsx, .xls) or CSV"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600" />
+              <span className="hidden xs:inline">Import Excel</span>
+              <span className="xs:hidden">Excel</span>
             </button>
 
             <button
@@ -1172,6 +1626,412 @@ export function ExpenseHistoryView({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Import from Excel / CSV Modal */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-emerald-50/60 via-slate-50 to-white">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-xs">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Import Expenses from Excel / CSV</h3>
+                  <p className="text-xs text-slate-500">Upload a spreadsheet to batch import and split expenses</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {/* If no file uploaded yet */}
+              {!importFile ? (
+                <div className="space-y-4">
+                  {/* Dropzone */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-6 sm:p-8 text-center cursor-pointer transition flex flex-col items-center justify-center group ${
+                      isDragging
+                        ? 'border-emerald-500 bg-emerald-50/50 scale-[0.99]'
+                        : 'border-slate-300 hover:border-emerald-400 hover:bg-slate-50/80 bg-slate-50/40'
+                    }`}
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                    <div className="w-14 h-14 rounded-2xl bg-emerald-100/70 text-emerald-700 flex items-center justify-center mb-3 group-hover:scale-110 transition shadow-xs">
+                      {isParsing ? (
+                        <Loader2 className="w-7 h-7 animate-spin" />
+                      ) : (
+                        <Upload className="w-7 h-7" />
+                      )}
+                    </div>
+                    <p className="text-sm font-bold text-slate-800">
+                      {isParsing ? 'Reading spreadsheet...' : 'Click to select or drag and drop your spreadsheet here'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Supports Excel files (.xlsx, .xls) and CSV (.csv)
+                    </p>
+                    <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold shadow-xs group-hover:bg-emerald-700 transition">
+                      <FileUp className="w-3.5 h-3.5" />
+                      <span>Browse Files</span>
+                    </div>
+                  </div>
+
+                  {/* Sample Template Helper */}
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <FileDown className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-800">Need the template format?</h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Download our pre-formatted template with columns matching your group members ({members.map(m => m.name).join(', ')}).
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 self-start sm:self-auto flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemplate('xlsx')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100/80 hover:bg-emerald-200 rounded-lg transition"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                        <span>Excel (.xlsx)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemplate('csv')}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-200 hover:bg-slate-300 rounded-lg transition"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>CSV (.csv)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* File Loaded & Parsed Preview */
+                <div className="space-y-4">
+                  {/* File Info Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 shadow-xs">
+                        <FileSpreadsheet className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-900 truncate max-w-xs sm:max-w-md">
+                            {importFile.name}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 font-bold uppercase rounded-md bg-slate-200 text-slate-700">
+                            {(importFile.size / 1024).toFixed(1)} KB
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {parsedRows.length} total rows parsed from file
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportFile(null);
+                          setParsedRows([]);
+                          setImportError('');
+                        }}
+                        className="text-xs text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 font-semibold px-3 py-1.5 rounded-lg transition"
+                      >
+                        Change File
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTemplate('xlsx')}
+                        className="text-xs text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 font-semibold px-3 py-1.5 rounded-lg transition flex items-center gap-1"
+                        title="Download sample template"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Template</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Summary Badges & Selection Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Ready: {validRowsCount}</span>
+                      </span>
+                      {invalidRowsCount > 0 && (
+                        <span className="text-xs px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 font-bold flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>Invalid: {invalidRowsCount}</span>
+                        </span>
+                      )}
+                      <span className="text-xs px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold">
+                        Selected: {selectedValidCount} of {validRowsCount}
+                      </span>
+                      <span className="text-xs px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold">
+                        Total Amount: {formatCurrency(totalSelectedAmount)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleSelectAll(true)}
+                        className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 transition"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleSelectAll(false)}
+                        className="text-[11px] font-bold text-slate-500 hover:text-slate-700 transition"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Preview Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                    <div className="max-h-72 overflow-x-auto overflow-y-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="bg-slate-100 sticky top-0 z-10 border-b border-slate-200 text-slate-700">
+                          <tr>
+                            <th className="py-2.5 px-3 text-center w-10">
+                              <input
+                                type="checkbox"
+                                checked={validRowsCount > 0 && selectedValidCount === validRowsCount}
+                                onChange={(e) => toggleSelectAll(e.target.checked)}
+                                className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              />
+                            </th>
+                            <th className="py-2.5 px-2 font-bold w-12 text-center">Row</th>
+                            <th className="py-2.5 px-2 font-bold">Status</th>
+                            <th className="py-2.5 px-3 font-bold">Date</th>
+                            <th className="py-2.5 px-3 font-bold">Title</th>
+                            <th className="py-2.5 px-3 font-bold">Category</th>
+                            <th className="py-2.5 px-3 font-bold text-right">Amount</th>
+                            <th className="py-2.5 px-3 font-bold">Paid By</th>
+                            <th className="py-2.5 px-3 font-bold">Shared With</th>
+                            <th className="py-2.5 px-3 font-bold">Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {parsedRows.map((r) => (
+                            <tr
+                              key={r.rowNum}
+                              className={`transition ${
+                                !r.isValid
+                                  ? 'bg-rose-50/40 opacity-75'
+                                  : r.selected
+                                  ? 'bg-emerald-50/30 hover:bg-emerald-50/50'
+                                  : 'hover:bg-slate-50'
+                              }`}
+                            >
+                              <td className="py-2 px-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  disabled={!r.isValid}
+                                  checked={r.selected}
+                                  onChange={() => toggleSelectRow(r.rowNum)}
+                                  className="w-3.5 h-3.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                />
+                              </td>
+                              <td className="py-2 px-2 text-center text-slate-400 font-mono text-[11px]">
+                                #{r.rowNum}
+                              </td>
+                              <td className="py-2 px-2 whitespace-nowrap">
+                                {r.isValid ? (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-700">
+                                    <Check className="w-3 h-3" />
+                                    <span>Ready</span>
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-rose-100 text-rose-700"
+                                    title={r.errors.join('; ')}
+                                  >
+                                    <AlertCircle className="w-3 h-3" />
+                                    <span>Error</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 whitespace-nowrap font-mono text-slate-700 text-[11px]">
+                                {r.date}
+                              </td>
+                              <td className="py-2 px-3 font-semibold text-slate-800">
+                                <div>{r.title || <span className="text-rose-500 italic">Missing Title</span>}</div>
+                                {r.errors.length > 0 && (
+                                  <div className="text-[10px] text-rose-600 font-normal mt-0.5">
+                                    {r.errors.join(' • ')}
+                                  </div>
+                                )}
+                                {r.warnings.length > 0 && (
+                                  <div className="text-[10px] text-amber-600 font-normal mt-0.5">
+                                    {r.warnings.join(' • ')}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 whitespace-nowrap">
+                                <span className="inline-block px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700">
+                                  {r.category}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 whitespace-nowrap text-right font-bold text-slate-900 font-mono">
+                                {r.amount > 0 ? (
+                                  formatCurrency(r.amount)
+                                ) : (
+                                  <span className="text-rose-600">₹0.00</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 whitespace-nowrap font-medium">
+                                {r.paid_by_member_id ? (
+                                  <span className="text-slate-800 font-semibold">{r.payer_name}</span>
+                                ) : (
+                                  <span className="text-rose-600 font-semibold">
+                                    {r.payer_name ? `"${r.payer_name}" (Unrecognized)` : 'Missing'}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-slate-600 text-[11px] max-w-[160px] truncate" title={r.participantNamesDisplay}>
+                                {r.participantNamesDisplay}
+                              </td>
+                              <td className="py-2 px-3 text-slate-400 text-[11px] max-w-[140px] truncate" title={r.notes}>
+                                {r.notes || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Security PIN Authorization Box */}
+                  <div className="bg-emerald-50/50 border border-emerald-200/80 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-emerald-900">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider">Authorize Batch Import</h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          Authorizing Member
+                        </label>
+                        <select
+                          value={importAuthorizingMemberId}
+                          onChange={(e) => setImportAuthorizingMemberId(Number(e.target.value))}
+                          className="w-full text-xs font-semibold px-3 py-2 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
+                        >
+                          {members.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">
+                          Member PIN / Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showImportPin ? 'text' : 'password'}
+                            maxLength={32}
+                            value={importPin}
+                            onChange={(e) => setImportPin(e.target.value)}
+                            placeholder="Enter 4-digit PIN"
+                            className="w-full tracking-wider text-xs font-bold px-3 py-2 pr-9 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800 placeholder:text-slate-400 placeholder:text-xs placeholder:font-normal placeholder:tracking-normal"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowImportPin(!showImportPin)}
+                            className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 p-0.5"
+                            title={showImportPin ? 'Hide PIN' : 'Show PIN'}
+                          >
+                            {showImportPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {importError && (
+                <div className="flex items-center gap-2 p-3 text-xs font-semibold text-rose-700 bg-rose-50 rounded-xl border border-rose-200 animate-shake">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{importError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                disabled={isImporting}
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setParsedRows([]);
+                  setImportFile(null);
+                  setImportError('');
+                }}
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition"
+              >
+                Cancel
+              </button>
+
+              {importFile && (
+                <button
+                  type="button"
+                  onClick={handleExecuteImport}
+                  disabled={isImporting || selectedValidCount === 0 || !importPin.trim()}
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs transition flex items-center gap-2 active:scale-95"
+                >
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Importing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileUp className="w-4 h-4" />
+                      <span>Import {selectedValidCount} Expense{selectedValidCount !== 1 ? 's' : ''}</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
