@@ -7,7 +7,13 @@ import { query } from './db.js';
 /**
  * Helper to build user-friendly, transparent calculation breakdown for a recommended transfer
  */
-export function buildTransferBreakdown(transfer, memberSummary = [], allExpenses = [], allParticipants = []) {
+export function buildTransferBreakdown(
+  transfer,
+  memberSummary = [],
+  allExpenses = [],
+  allParticipants = [],
+  pairwise = null
+) {
   const payer = memberSummary.find((m) => Number(m.id) === Number(transfer.payer_id)) || {
     id: transfer.payer_id,
     name: transfer.payer_name,
@@ -26,6 +32,37 @@ export function buildTransferBreakdown(transfer, memberSummary = [], allExpenses
   const payerTotalPaid = Number((payer.totalPaid || 0).toFixed(2));
   const payerActualShare = Number((payer.actualShare || 0).toFixed(2));
   const payerNetBalance = Number((payerTotalPaid - payerActualShare).toFixed(2));
+
+  // Compute pairwise net debt matrix if not passed
+  if (!pairwise) {
+    pairwise = {};
+    for (const m1 of memberSummary) {
+      pairwise[m1.id] = {};
+      for (const m2 of memberSummary) {
+        pairwise[m1.id][m2.id] = 0;
+      }
+    }
+    for (const p of memberSummary) {
+      for (const r of memberSummary) {
+        if (Number(p.id) === Number(r.id)) continue;
+        const rExpIds = allExpenses
+          .filter((e) => Number(e.paid_by_member_id) === Number(r.id))
+          .map((e) => e.id);
+        const pOwesR = allParticipants
+          .filter((ep) => rExpIds.includes(ep.expense_id) && Number(ep.member_id) === Number(p.id))
+          .reduce((s, ep) => s + Number(ep.allocated_amount), 0);
+
+        const pExpIds = allExpenses
+          .filter((e) => Number(e.paid_by_member_id) === Number(p.id))
+          .map((e) => e.id);
+        const rOwesP = allParticipants
+          .filter((ep) => pExpIds.includes(ep.expense_id) && Number(ep.member_id) === Number(r.id))
+          .reduce((s, ep) => s + Number(ep.allocated_amount), 0);
+
+        pairwise[p.id][r.id] = Number((pOwesR - rOwesP).toFixed(2));
+      }
+    }
+  }
 
   // Direct bills: Expenses paid by Receiver where Payer was a participant
   const payerOwedBillsToReceiver = (payer.participatedExpenses || [])
@@ -73,114 +110,156 @@ export function buildTransferBreakdown(transfer, memberSummary = [], allExpenses
   const directOffsetFromPayer = Number(receiverOwedBillsToPayer.reduce((s, b) => s + b.receiver_share, 0).toFixed(2));
   const directNetDebt = Number((directOwedToReceiver - directOffsetFromPayer).toFixed(2));
 
-  let contributingBills = [];
-  let initialAmountOwed = 0;
-  let initialAmountOwedLabel = '';
+  // Contributing bills:
+  let contributingBills = payerOwedBillsToReceiver;
+  if (contributingBills.length === 0 && (payer.participatedExpenses || []).length > 0) {
+    contributingBills = (payer.participatedExpenses || []).map((p) => ({
+      id: p.id,
+      date: p.date,
+      title: p.title,
+      category: p.category,
+      total_bill: Number(p.total_bill),
+      paid_by_id: Number(p.payer_id),
+      paid_by_name: p.payer_name,
+      payer_share: Number(p.allocated_share),
+      is_receiver_bill: Number(p.payer_id) === Number(receiver.id),
+      explanation:
+        Number(p.payer_id) === Number(receiver.id)
+          ? `${payer.name} owes this share because ${receiver.name} paid the bill.`
+          : `${payer.name} owes this share for a bill paid by ${p.payer_name}, consolidated into settlement.`
+    }));
+  }
+
+  const initialAmountOwed = directOwedToReceiver;
+  const initialAmountOwedLabel = directOwedToReceiver > 0
+    ? `Initial amount owed (bills paid by ${receiver.name})`
+    : `Direct share of bills paid by ${receiver.name}`;
+
+  // Reconciled multilateral third-party adjustments
+  const pId = Number(transfer.payer_id);
+  const rId = Number(transfer.receiver_id);
+  const transferAmount = Number(transfer.amount);
+
+  let diff = Number((transferAmount - directNetDebt).toFixed(2));
   const thirdPartyAdjustments = [];
 
-  if (payerTotalPaid <= 0.01) {
-    // Pure debtor: All bills payer participated in contribute directly to their debt
-    contributingBills = (payer.participatedExpenses || []).map((p) => {
-      const isRec = Number(p.payer_id) === Number(receiver.id);
-      return {
-        id: p.id,
-        date: p.date,
-        title: p.title,
-        category: p.category,
-        total_bill: Number(p.total_bill),
-        paid_by_id: Number(p.payer_id),
-        paid_by_name: p.payer_name,
-        payer_share: Number(p.allocated_share),
-        is_receiver_bill: isRec,
-        explanation: isRec
-          ? `${payer.name} owes this share because ${receiver.name} paid the bill.`
-          : `${payer.name} owes this share for a bill paid by ${p.payer_name}, consolidated into transfer to ${receiver.name}.`
-      };
-    });
+  if (Math.abs(diff) >= 0.009) {
+    for (const X of memberSummary) {
+      if (Number(X.id) === pId || Number(X.id) === rId) continue;
+      if (Math.abs(diff) < 0.009) break;
 
-    initialAmountOwed = directOwedToReceiver;
-    initialAmountOwedLabel = `Direct share of bills paid by ${receiver.name}`;
-
-    for (const other of memberSummary) {
-      if (Number(other.id) === Number(payer.id) || Number(other.id) === Number(receiver.id)) continue;
-      const owesOther = (payer.participatedExpenses || [])
-        .filter((p) => Number(p.payer_id) === Number(other.id))
-        .reduce((s, p) => s + Number(p.allocated_share), 0);
-
-      if (owesOther > 0.009) {
-        const otherIsDebtor = (other.outstandingBalance || 0) < -0.01;
-        const description = otherIsDebtor
-          ? `${payer.name} owes ₹${owesOther.toFixed(2)} for bills paid by ${other.name}. Because ${other.name} is also a net debtor in the group, the settlement algorithm directs ${payer.name} to transfer this share directly to ${receiver.name} (settling ${payer.name}'s debt to ${other.name} and crediting ${other.name}'s balance).`
-          : `${payer.name} owes ₹${owesOther.toFixed(2)} for bills paid by ${other.name}. In the consolidated settlement, ${payer.name} transfers this share directly to ${receiver.name} to settle net balances in the fewest payments.`;
-
+      // 1. Receiver owes X directly (pairwise[rId][X.id] > 0)
+      // When diff < 0 (transfer to R is less than direct debt):
+      // P settles with X on R's behalf, reducing the transfer amount to R.
+      const rOwesX = pairwise[rId]?.[X.id] || 0;
+      if (rOwesX > 0.009 && diff < -0.009) {
+        const amt = Number(Math.min(rOwesX, Math.abs(diff)).toFixed(2));
+        diff = Number((diff + amt).toFixed(2));
         thirdPartyAdjustments.push({
-          member_id: other.id,
-          member_name: other.name,
-          amount: Number(owesOther.toFixed(2)),
+          member_id: X.id,
+          member_name: X.name,
+          amount: amt,
+          type: 'less',
+          label: `Offset for ${receiver.name}'s debt to ${X.name} (settled via ${payer.name})`,
+          description: `${receiver.name} owes ₹${amt.toFixed(2)} to ${X.name} for bills paid by ${X.name}. In the consolidated settlement, ${payer.name} settles this with ${X.name} on ${receiver.name}'s behalf, reducing this transfer to ${receiver.name}.`
+        });
+      }
+
+      // 2. X owes Receiver directly (pairwise[X.id][rId] > 0)
+      // When diff > 0 (transfer to R is more than direct debt):
+      // P pays R on X's behalf to minimize group transactions.
+      const xOwesR = pairwise[X.id]?.[rId] || 0;
+      if (xOwesR > 0.009 && diff > 0.009) {
+        const amt = Number(Math.min(xOwesR, diff).toFixed(2));
+        diff = Number((diff - amt).toFixed(2));
+        thirdPartyAdjustments.push({
+          member_id: X.id,
+          member_name: X.name,
+          amount: amt,
           type: 'add',
-          label: `Consolidated debt for bills paid by ${other.name}`,
-          description
+          label: `Consolidated payment for ${X.name}'s debt to ${receiver.name}`,
+          description: `${X.name} owes ₹${amt.toFixed(2)} to ${receiver.name} for bills paid by ${receiver.name}. In the consolidated settlement, ${payer.name} transfers this amount directly to ${receiver.name} on ${X.name}'s behalf to minimize group transactions.`
+        });
+      }
+
+      // 3. Payer owes X directly (pairwise[pId][X.id] > 0)
+      // When diff > 0: P routes payment to R to settle multilateral debts.
+      const pOwesX = pairwise[pId]?.[X.id] || 0;
+      if (pOwesX > 0.009 && diff > 0.009) {
+        const amt = Number(Math.min(pOwesX, diff).toFixed(2));
+        diff = Number((diff - amt).toFixed(2));
+        thirdPartyAdjustments.push({
+          member_id: X.id,
+          member_name: X.name,
+          amount: amt,
+          type: 'add',
+          label: `Consolidated settlement for bills paid by ${X.name}`,
+          description: `${payer.name} owes ₹${amt.toFixed(2)} for bills paid by ${X.name}. In the consolidated settlement, this is routed through ${receiver.name} to minimize transactions.`
+        });
+      }
+
+      // 4. X owes Payer directly (pairwise[X.id][pId] > 0)
+      // When diff < 0: Payer absorbs X's debt, reducing transfer to R.
+      const xOwesP = pairwise[X.id]?.[pId] || 0;
+      if (xOwesP > 0.009 && diff < -0.009) {
+        const amt = Number(Math.min(xOwesP, Math.abs(diff)).toFixed(2));
+        diff = Number((diff + amt).toFixed(2));
+        thirdPartyAdjustments.push({
+          member_id: X.id,
+          member_name: X.name,
+          amount: amt,
+          type: 'less',
+          label: `Offset for ${X.name}'s debt to ${payer.name}`,
+          description: `${X.name} owes ₹${amt.toFixed(2)} to ${payer.name}. In the consolidated settlement, this is adjusted against this transfer.`
         });
       }
     }
-  } else {
-    // Payer who also paid expenses: contributing bills are bills paid by receiver that payer participated in
-    contributingBills = payerOwedBillsToReceiver;
-    initialAmountOwed = directOwedToReceiver;
-    initialAmountOwedLabel = `Initial amount owed (bills paid by ${receiver.name})`;
 
-    for (const other of memberSummary) {
-      if (Number(other.id) === Number(payer.id) || Number(other.id) === Number(receiver.id)) continue;
-
-      let otherOwesPayer = 0;
-      let payerOwesOther = 0;
-
-      if (allParticipants.length > 0 && allExpenses.length > 0) {
-        const payerExpenseIds = allExpenses
-          .filter((e) => Number(e.paid_by_member_id) === Number(payer.id))
-          .map((e) => e.id);
-        otherOwesPayer = allParticipants
-          .filter((p) => payerExpenseIds.includes(p.expense_id) && Number(p.member_id) === Number(other.id))
-          .reduce((s, p) => s + Number(p.allocated_amount), 0);
-
-        const otherExpenseIds = allExpenses
-          .filter((e) => Number(e.paid_by_member_id) === Number(other.id))
-          .map((e) => e.id);
-        payerOwesOther = allParticipants
-          .filter((p) => otherExpenseIds.includes(p.expense_id) && Number(p.member_id) === Number(payer.id))
-          .reduce((s, p) => s + Number(p.allocated_amount), 0);
-      }
-
-      const netWithOther = Number((otherOwesPayer - payerOwesOther).toFixed(2));
-
-      if (netWithOther > 0.009) {
+    // Residual difference, if any
+    if (Math.abs(diff) > 0.009) {
+      if (diff > 0) {
         thirdPartyAdjustments.push({
-          member_id: other.id,
-          member_name: other.name,
-          amount: netWithOther,
-          type: 'less',
-          label: `${other.name}'s debt to ${payer.name} transferred to ${receiver.name}`,
-          description: `${other.name} owes ₹${netWithOther.toFixed(2)} to ${payer.name} for expenses paid by ${payer.name}. In the consolidated settlement, ${other.name} pays ${receiver.name} directly, reducing ${payer.name}'s required transfer to ${receiver.name} by ₹${netWithOther.toFixed(2)}.`
-        });
-      } else if (netWithOther < -0.009) {
-        const debtToOther = Math.abs(netWithOther);
-        thirdPartyAdjustments.push({
-          member_id: other.id,
-          member_name: other.name,
-          amount: debtToOther,
+          amount: Number(diff.toFixed(2)),
           type: 'add',
-          label: `Consolidated debt for bills paid by ${other.name}`,
-          description: `${payer.name} owes ₹${debtToOther.toFixed(2)} for bills paid by ${other.name}. In the consolidated settlement, this is routed directly to ${receiver.name} to minimize transactions.`
+          label: 'Consolidated settlement optimization adjustment',
+          description: `Additional consolidated balance of ₹${diff.toFixed(2)} routed to ${receiver.name} to minimize overall group transactions.`
+        });
+      } else {
+        thirdPartyAdjustments.push({
+          amount: Number(Math.abs(diff).toFixed(2)),
+          type: 'less',
+          label: 'Consolidated settlement optimization offset',
+          description: `Consolidated balance of ₹${Math.abs(diff).toFixed(2)} offset through other participants' balances.`
         });
       }
     }
   }
 
+  const fmt = (n) => '₹' + Math.abs(n).toFixed(2);
+
+  // Build clean tally formula
+  const tallyParts = [`${fmt(directNetDebt)} (Direct Net)`];
+  for (const a of thirdPartyAdjustments) {
+    tallyParts.push(`${a.type === 'less' ? '−' : '+'} ${fmt(a.amount)}`);
+  }
+  const tallyFormula = tallyParts.length > 1
+    ? `${tallyParts.join(' ')} = ${fmt(transfer.amount)}`
+    : `${fmt(transfer.amount)} = ${fmt(transfer.amount)}`;
+
+  let summaryExplanation = '';
+  if (thirdPartyAdjustments.length === 0) {
+    summaryExplanation = `${payer.name} transfers ${fmt(transfer.amount)} directly to ${receiver.name} to settle their shared expenses.`;
+  } else {
+    const adjDescriptions = thirdPartyAdjustments
+      .map((a) => `${a.type === 'less' ? 'less' : 'plus'} ${fmt(a.amount)} (${a.label.toLowerCase()})`)
+      .join(', ');
+    summaryExplanation = `${payer.name}'s direct balance with ${receiver.name} is ${fmt(directNetDebt)}. After accounting for consolidated debts with other participants (${adjDescriptions}), the final recommended transfer is ${fmt(transfer.amount)}.`;
+  }
+
   const contributingBillsTotal = Number(contributingBills.reduce((s, b) => s + b.payer_share, 0).toFixed(2));
 
   return {
-    summaryExplanation:
-      'This amount is calculated from the difference between the amount you paid and your share of the expenses, after accounting for the other participants\' balances.',
+    summaryExplanation,
     contributingBills,
     contributingBillsTotal,
     stepCalculation: {
@@ -194,7 +273,8 @@ export function buildTransferBreakdown(transfer, memberSummary = [], allExpenses
       directOffsetAmount: directOffsetFromPayer,
       directNetDebt,
       thirdPartyAdjustments,
-      totalAdjustmentsAmount: Number(thirdPartyAdjustments.reduce((s, a) => s + a.amount, 0).toFixed(2)),
+      totalAdjustmentsAmount: Number(thirdPartyAdjustments.reduce((s, a) => s + (a.type === 'less' ? -a.amount : a.amount), 0).toFixed(2)),
+      tallyFormula,
       finalRecommendedTransfer: transfer.amount
     }
   };
@@ -214,6 +294,36 @@ export function solveMinCashFlow(memberBalances, allExpenses = [], allParticipan
       debtors.push({ ...mb, amountPaise: Math.abs(paise) });
     } else if (paise > 1) {
       creditors.push({ ...mb, amountPaise: paise });
+    }
+  }
+
+  // Precompute pairwise net balance matrix: pairwise[P][R] = net amount P owes R directly
+  const pairwise = {};
+  for (const m1 of memberBalances) {
+    pairwise[m1.id] = {};
+    for (const m2 of memberBalances) {
+      pairwise[m1.id][m2.id] = 0;
+    }
+  }
+
+  for (const p of memberBalances) {
+    for (const r of memberBalances) {
+      if (Number(p.id) === Number(r.id)) continue;
+      const rExpIds = allExpenses
+        .filter((e) => Number(e.paid_by_member_id) === Number(r.id))
+        .map((e) => e.id);
+      const pOwesR = allParticipants
+        .filter((ep) => rExpIds.includes(ep.expense_id) && Number(ep.member_id) === Number(p.id))
+        .reduce((s, ep) => s + Number(ep.allocated_amount), 0);
+
+      const pExpIds = allExpenses
+        .filter((e) => Number(e.paid_by_member_id) === Number(p.id))
+        .map((e) => e.id);
+      const rOwesP = allParticipants
+        .filter((ep) => pExpIds.includes(ep.expense_id) && Number(ep.member_id) === Number(r.id))
+        .reduce((s, ep) => s + Number(ep.allocated_amount), 0);
+
+      pairwise[p.id][r.id] = Number((pOwesR - rOwesP).toFixed(2));
     }
   }
 
@@ -260,12 +370,13 @@ export function solveMinCashFlow(memberBalances, allExpenses = [], allParticipan
       allReceiverPaidExpenses: creditor.paidExpenses || []
     };
 
-    // Attach rich, transparent calculation breakdown
+    // Attach rich, transparent calculation breakdown with pairwise matrix
     rawTransfer.breakdown = buildTransferBreakdown(
       rawTransfer,
       memberBalances,
       allExpenses,
-      allParticipants
+      allParticipants,
+      pairwise
     );
 
     transfers.push(rawTransfer);

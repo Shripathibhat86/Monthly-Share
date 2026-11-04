@@ -735,14 +735,17 @@ export function SettlementEngineView({
                             </div>
                           )}
 
-                          <div className="flex justify-between items-center text-slate-600 text-[11px] pt-0.5">
-                            <span>Direct pairwise net balance ({t.payer_name} ↔ {t.receiver_name}):</span>
-                            <span className="font-semibold text-slate-800">
-                              {formatCurrency(stepCalc.directNetDebt || 0)}
-                            </span>
-                          </div>
+                          {/* Direct pairwise net balance row inside offset section if offset exists */}
                         </div>
                       )}
+
+                      {/* Direct pairwise net balance */}
+                      <div className="flex justify-between items-center py-1.5 border-b border-slate-200/60 text-slate-700 font-semibold">
+                        <span>Direct pairwise net balance ({t.payer_name} ↔ {t.receiver_name}):</span>
+                        <span className="font-bold text-slate-800">
+                          {formatCurrency(stepCalc.directNetDebt !== undefined ? stepCalc.directNetDebt : (stepCalc.initialAmountOwed || 0))}
+                        </span>
+                      </div>
 
                       {/* Third Party Adjustments */}
                       {stepCalc.thirdPartyAdjustments?.map((adj, idx) => (
@@ -769,6 +772,24 @@ export function SettlementEngineView({
                           </p>
                         </div>
                       ))}
+
+                      {/* Calculation Tally Formula */}
+                      <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs text-indigo-950">
+                        <span className="font-bold text-indigo-900 flex items-center gap-1.5">
+                          <Scale className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Calculation Tally:</span>
+                        </span>
+                        <span className="font-mono font-bold text-indigo-800 sm:text-right">
+                          {stepCalc.tallyFormula ||
+                            `${formatCurrency(stepCalc.directNetDebt !== undefined ? stepCalc.directNetDebt : (stepCalc.initialAmountOwed || 0))} ${
+                              (stepCalc.thirdPartyAdjustments || []).length > 0
+                                ? (stepCalc.thirdPartyAdjustments || [])
+                                    .map((a) => `${a.type === 'less' ? '−' : '+'} ${formatCurrency(a.amount)}`)
+                                    .join(' ')
+                                : ''
+                            } = ${formatCurrency(t.amount)}`}
+                        </span>
+                      </div>
 
                       {/* Final Transfer Summary Box */}
                       <div className="p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-indigo-50/60 rounded-xl border border-indigo-200 mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
