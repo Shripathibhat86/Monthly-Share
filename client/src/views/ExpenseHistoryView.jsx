@@ -410,10 +410,10 @@ export function ExpenseHistoryView({
 
   // Sample template generator
   const handleDownloadTemplate = (format = 'xlsx') => {
-    const memberNames = members.map(m => m.name).join(', ') || 'Shripathi, Niranth, Sharath, Vatsa';
-    const payer1 = members[0]?.name || 'Shripathi';
-    const payer2 = members[1]?.name || 'Sharath';
-    const payer3 = members[2]?.name || 'Vatsa';
+    const memberNames = members.map(m => m.name).join(', ') || 'Member 1, Member 2';
+    const payer1 = members[0]?.name || 'Member 1';
+    const payer2 = members[1]?.name || payer1;
+    const payer3 = members[2]?.name || payer1;
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const sampleRows = [

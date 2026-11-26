@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar';
 import { BottomNav } from './components/BottomNav';
 import { Toast } from './components/Toast';
 import { PinModal } from './components/PinModal';
+import { AuthView } from './components/AuthView';
 
 // Views
 import { DashboardView } from './views/DashboardView';
@@ -18,6 +19,10 @@ import { ParticipationReportsView } from './views/ParticipationReportsView';
 import { SettingsView } from './views/SettingsView';
 
 export function App() {
+  const [authChecking, setAuthChecking] = useState(true);
+  const [needsAdminSetup, setNeedsAdminSetup] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
   const [members, setMembers] = useState([]);
@@ -27,7 +32,7 @@ export function App() {
   const [systemInfo, setSystemInfo] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
 
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -38,9 +43,6 @@ export function App() {
     message: '',
     onConfirm: null
   });
-
-  // Delete Expense Confirmation state
-  const [expenseToDelete, setExpenseToDelete] = useState(null);
 
   const showToast = ({ type = 'info', message }) => {
     setToast({ type, message });
@@ -65,33 +67,103 @@ export function App() {
     setPinModalState((prev) => ({ ...prev, isOpen: false, onConfirm: null }));
   };
 
-  // Fetch initial & recurring data
-  const loadData = async (month = selectedMonth) => {
+  const resetWorkspaceState = () => {
+    setMembers([]);
+    setExpenses([]);
+    setSettlementSummary(null);
+    setMonthlyReport(null);
+    setSystemInfo(null);
+    setEditingExpense(null);
+    setActiveTab('dashboard');
+  };
+
+  // Check authentication status on startup
+  useEffect(() => {
+    let mounted = true;
+    async function checkAuth() {
+      try {
+        const status = await api.getAuthStatus();
+        if (!mounted) return;
+        setNeedsAdminSetup(Boolean(status.needsAdminSetup));
+        if (status.authenticated && status.user) {
+          setCurrentUser(status.user);
+        } else {
+          setCurrentUser(null);
+        }
+      } catch (err) {
+        if (!mounted) return;
+        showToast({ type: 'error', message: err.message || 'Unable to reach server' });
+      } finally {
+        if (mounted) setAuthChecking(false);
+      }
+    }
+    checkAuth();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Fetch user-scoped data once signed in
+  const loadData = async (month = selectedMonth, userOverride = currentUser) => {
+    if (!userOverride) return;
     setIsLoading(true);
     try {
-      const [membersData, expensesData, summaryData, reportData, sysInfoData] = await Promise.all([
+      const requests = [
         api.getMembers(),
         api.getExpenses({ month }),
         api.getSettlementSummary(month),
-        api.getMonthlyReport(month),
-        api.getSystemInfo()
-      ]);
+        api.getMonthlyReport(month)
+      ];
+
+      if (userOverride.role === 'admin') {
+        requests.push(api.getSystemInfo());
+      }
+
+      const [membersData, expensesData, summaryData, reportData, sysInfoData] = await Promise.all(requests);
 
       setMembers(membersData);
       setExpenses(expensesData);
       setSettlementSummary(summaryData);
       setMonthlyReport(reportData);
-      setSystemInfo(sysInfoData);
+      setSystemInfo(sysInfoData || null);
     } catch (err) {
-      showToast({ type: 'error', message: err.message || 'Error connecting to server' });
+      if (err.status === 401) {
+        setCurrentUser(null);
+        resetWorkspaceState();
+        showToast({ type: 'error', message: 'Session expired. Please sign in again.' });
+      } else {
+        showToast({ type: 'error', message: err.message || 'Error connecting to server' });
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData(selectedMonth);
-  }, [selectedMonth]);
+    if (currentUser) {
+      loadData(selectedMonth, currentUser);
+    }
+  }, [selectedMonth, currentUser?.id]);
+
+  const handleAuthSuccess = (user, message) => {
+    setNeedsAdminSetup(false);
+    resetWorkspaceState();
+    setCurrentUser(user);
+    if (message) {
+      showToast({ type: 'success', message });
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch {
+      // ignore
+    }
+    setCurrentUser(null);
+    resetWorkspaceState();
+    showToast({ type: 'info', message: 'Signed out successfully' });
+  };
 
   const handleMonthChange = (newMonth) => {
     setSelectedMonth(newMonth);
@@ -122,7 +194,6 @@ export function App() {
 
   // Handle Delete Expense with PIN verification
   const handleRequestDelete = (expense) => {
-    setExpenseToDelete(expense);
     requestPin({
       title: 'Delete Expense Authorization',
       message: `Are you sure you want to delete "${expense.title}" (₹${expense.amount})? Please authorize with member PIN.`,
@@ -130,7 +201,6 @@ export function App() {
         try {
           await api.deleteExpense(expense.id, { memberId, pin });
           showToast({ type: 'success', message: 'Expense deleted and balances updated!' });
-          setExpenseToDelete(null);
           loadData();
         } catch (err) {
           showToast({ type: 'error', message: err.message || 'Failed to delete expense' });
@@ -146,6 +216,26 @@ export function App() {
     await loadData(month || selectedMonth);
     return res;
   };
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-9 h-9 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-xs font-semibold text-slate-500">Checking session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <>
+        <Toast toast={toast} onClose={() => setToast(null)} />
+        <AuthView needsAdminSetup={needsAdminSetup} onAuthSuccess={handleAuthSuccess} />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased">
@@ -168,6 +258,9 @@ export function App() {
         onMonthChange={handleMonthChange}
         systemInfo={systemInfo}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        currentUser={currentUser}
+        membersCount={members.length}
+        onLogout={handleLogout}
       />
 
       <div className="flex-1 flex max-w-7xl w-full mx-auto">
@@ -176,13 +269,15 @@ export function App() {
           activeTab={activeTab}
           setActiveTab={(tab) => {
             if (tab === 'add-expense' && activeTab !== 'add-expense') {
-              setEditingExpense(null); // Clear editing if clicking Add Expense
+              setEditingExpense(null);
             }
             setActiveTab(tab);
           }}
           members={members}
           isOpenMobile={isMobileMenuOpen}
           onCloseMobile={() => setIsMobileMenuOpen(false)}
+          currentUser={currentUser}
+          onLogout={handleLogout}
         />
 
         {/* Main Content Area */}
@@ -264,6 +359,9 @@ export function App() {
                 <SettingsView
                   members={members}
                   systemInfo={systemInfo}
+                  currentUser={currentUser}
+                  onUserUpdated={(updatedUser) => setCurrentUser(updatedUser)}
+                  onLogout={handleLogout}
                   onRefreshMembers={loadData}
                   showToast={showToast}
                   onRequestPin={requestPin}

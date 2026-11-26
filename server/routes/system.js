@@ -4,15 +4,22 @@ import { getDbInfo } from '../db.js';
 
 const router = Router();
 
-// GET system network info and database status
+// GET system network info and database status (full details for admin, minimal for normal users)
 router.get('/info', (req, res) => {
+  const isAdmin = req.user?.role === 'admin';
+  if (!isAdmin) {
+    return res.json({
+      role: req.user?.role || 'user',
+      restricted: true
+    });
+  }
+
   const port = process.env.PORT || 3002;
   const networkInterfaces = os.networkInterfaces();
   const lanAddresses = [];
 
   for (const interfaceName of Object.keys(networkInterfaces)) {
     for (const net of networkInterfaces[interfaceName]) {
-      // IPv4 and not loopback
       if (net.family === 'IPv4' && !net.internal) {
         lanAddresses.push({
           interface: interfaceName,
@@ -26,6 +33,7 @@ router.get('/info', (req, res) => {
   const dbInfo = getDbInfo();
 
   res.json({
+    role: 'admin',
     port,
     hostname: os.hostname(),
     lanAddresses,

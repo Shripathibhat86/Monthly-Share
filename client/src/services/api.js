@@ -3,6 +3,7 @@ const BASE_URL = '/api';
 async function request(endpoint, options = {}) {
   const url = `${BASE_URL}${endpoint}`;
   const config = {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...options.headers
@@ -15,17 +16,32 @@ async function request(endpoint, options = {}) {
 
   if (!response.ok) {
     const errorMsg = data.error || response.statusText || 'Request failed';
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg);
+    err.status = response.status;
+    throw err;
   }
 
   return data;
 }
 
 export const api = {
+  // Authentication & Accounts
+  getAuthStatus: () => request('/auth/status'),
+  setupAdmin: (payload) => request('/auth/setup-admin', { method: 'POST', body: JSON.stringify(payload) }),
+  register: (payload) => request('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+  login: (payload) => request('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
+  getMe: () => request('/auth/me'),
+  updateMe: (payload) => request('/auth/me', { method: 'PUT', body: JSON.stringify(payload) }),
+  getUsers: () => request('/auth/users'),
+  deleteUser: (id) => request(`/auth/users/${id}`, { method: 'DELETE' }),
+
   // Members
   getMembers: () => request('/members'),
+  createMember: (payload) => request('/members', { method: 'POST', body: JSON.stringify(payload) }),
   updateMember: (id, payload) => request(`/members/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   updateMemberPin: (id, payload) => request(`/members/${id}/pin`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteMember: (id) => request(`/members/${id}`, { method: 'DELETE' }),
   verifyPin: (memberId, pin) => request('/members/verify-pin', { method: 'POST', body: JSON.stringify({ memberId, pin }) }),
 
   // Expenses

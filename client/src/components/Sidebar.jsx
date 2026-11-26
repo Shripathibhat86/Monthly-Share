@@ -8,7 +8,10 @@ import {
   Settings,
   Users,
   Sparkles,
-  X
+  X,
+  LogOut,
+  ShieldCheck,
+  User
 } from 'lucide-react';
 
 export function Sidebar({
@@ -16,16 +19,22 @@ export function Sidebar({
   setActiveTab,
   members = [],
   isOpenMobile,
-  onCloseMobile
+  onCloseMobile,
+  currentUser,
+  onLogout
 }) {
+  const isAdmin = currentUser?.role === 'admin';
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'add-expense', label: 'Add Expense', icon: PlusCircle, highlight: true },
     { id: 'history', label: 'Expense History', icon: ReceiptText },
     { id: 'settlements', label: 'Settlement Engine', icon: Scale },
     { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
-    { id: 'settings', label: 'Settings & LAN', icon: Settings },
+    { id: 'settings', label: isAdmin ? 'Settings & Admin' : 'Settings & Members', icon: Settings },
   ];
+
+  const occasionalNames = members.filter((m) => m.role === 'occasional').map((m) => m.name);
 
   return (
     <>
@@ -92,7 +101,7 @@ export function Sidebar({
           {/* Members section */}
           <div className="pt-6">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 px-3 py-1 flex items-center justify-between">
-              <span>Active Members</span>
+              <span>Members ({members.length})</span>
               <Users className="w-3.5 h-3.5" />
             </div>
 
@@ -102,12 +111,12 @@ export function Sidebar({
                   key={member.id}
                   className="flex items-center justify-between px-2.5 py-2 rounded-xl text-xs bg-slate-50 border border-slate-100"
                 >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${member.role === 'occasional' ? 'bg-amber-400' : 'bg-indigo-500'}`} />
-                    <span className="font-semibold text-slate-700">{member.name}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${member.role === 'occasional' ? 'bg-amber-400' : 'bg-indigo-500'}`} />
+                    <span className="font-semibold text-slate-700 truncate">{member.name}</span>
                   </div>
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium capitalize ${
+                    className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium capitalize flex-shrink-0 ${
                       member.role === 'occasional'
                         ? 'bg-amber-50 text-amber-700 border border-amber-200'
                         : 'bg-indigo-50 text-indigo-700 border border-indigo-100'
@@ -121,17 +130,43 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Bottom card: Occasional Member reminder */}
-        <div className="p-4 border-t border-slate-100">
+        {/* Bottom card: Fair split & signed-in account */}
+        <div className="p-4 border-t border-slate-100 space-y-2.5">
           <div className="p-3 bg-gradient-to-br from-indigo-50 to-slate-50 rounded-xl border border-indigo-100/60 text-xs">
             <div className="flex items-center gap-1.5 font-semibold text-indigo-900 mb-1">
               <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
               <span>Fair Split Rules</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Expenses are strictly shared among selected participants. Vatsa (occasional) is included only when selected.
+              {occasionalNames.length > 0
+                ? `Expenses are strictly shared among selected participants. ${occasionalNames.join(', ')} (occasional) is included only when selected.`
+                : 'Expenses are strictly shared among the members you select in each entry.'}
             </p>
           </div>
+
+          {currentUser && (
+            <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${isAdmin ? 'bg-indigo-600 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                  {isAdmin ? <ShieldCheck className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-800 truncate">{currentUser.name}</div>
+                  <div className="text-[10px] text-slate-400 truncate">
+                    {isAdmin ? 'Admin Account' : 'Normal Account'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={onLogout}
+                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
     </>

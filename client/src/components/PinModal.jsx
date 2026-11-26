@@ -20,7 +20,7 @@ export function PinModal({
     if (isOpen) {
       setPin('');
       setError('');
-      if (members.length > 0 && selectedMemberId === 'any') {
+      if (members.length > 0 && (selectedMemberId === 'any' || !members.some((m) => Number(m.id) === Number(selectedMemberId)))) {
         setSelectedMemberId(members[0].id);
       }
     }
@@ -126,7 +126,7 @@ export function PinModal({
             </div>
             <p className="text-[10px] text-slate-400 text-center mt-1.5 flex items-center justify-center gap-1">
               <ShieldCheck className="w-3 h-3 text-emerald-600" />
-              <span>Public viewers cannot edit without member password</span>
+              <span>Authorize with member PIN or your account password</span>
             </p>
           </div>
 

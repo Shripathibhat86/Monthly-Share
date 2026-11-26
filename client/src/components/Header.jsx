@@ -7,7 +7,8 @@ import {
   Menu,
   IndianRupee,
   ShieldCheck,
-  Lock
+  LogOut,
+  User
 } from 'lucide-react';
 import { getMonthName } from '../utils/formatters';
 
@@ -15,9 +16,11 @@ export function Header({
   selectedMonth,
   onMonthChange,
   systemInfo,
-  onToggleMobileMenu
+  onToggleMobileMenu,
+  currentUser,
+  membersCount = 0,
+  onLogout
 }) {
-  // Parse year and month
   const [yearStr, monthStr] = selectedMonth.split('-');
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
@@ -61,6 +64,8 @@ export function Header({
     { num: '12', name: 'Dec' }
   ];
 
+  const isAdmin = currentUser?.role === 'admin';
+
   return (
     <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3.5 no-print shadow-xs">
       <div className="flex items-center justify-between gap-2 sm:gap-4 max-w-7xl mx-auto">
@@ -84,7 +89,9 @@ export function Header({
                 <span className="hidden sm:inline">Monthly Expense Manager</span>
               </h1>
               <p className="text-[11px] text-slate-500 font-medium hidden md:block">
-                Internal 4-Member Shared Accounting Engine
+                {membersCount > 0
+                  ? `${membersCount}-Member Shared Accounting Engine`
+                  : 'Personal & Shared Accounting Engine'}
               </p>
             </div>
           </div>
@@ -118,7 +125,6 @@ export function Header({
               <ChevronRight className="w-4 h-4 sm:w-4 sm:h-4 stroke-[2.5]" />
             </button>
 
-            {/* Quick jump dropdown (desktop) */}
             <div className="border-l border-slate-200 pl-1.5 ml-1 hidden md:flex items-center gap-1">
               <select
                 value={monthStr}
@@ -145,26 +151,45 @@ export function Header({
             </div>
           </div>
 
-          {/* Right: Security Mode & Network Badge */}
+          {/* Right: User Account Badge & Admin Badges */}
           <div className="flex items-center gap-1.5 sm:gap-2">
-            <div
-              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 bg-amber-50 border border-amber-200/80 text-amber-800 rounded-full text-[10px] sm:text-xs font-semibold shadow-xs"
-              title="Secure Read-Only View: Password required to add, edit, or settle expenses."
-            >
-              <Lock className="w-3 h-3 text-amber-600 flex-shrink-0" />
-              <span>Protected View</span>
-            </div>
+            {isAdmin && systemInfo && !systemInfo.restricted && (
+              <>
+                <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-medium shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>Port {systemInfo?.port || 3002}</span>
+                </div>
+                <div className="hidden xl:flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-full text-xs font-medium">
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>{systemInfo?.database?.type || 'SQLite'}</span>
+                </div>
+              </>
+            )}
 
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-full text-xs font-medium shadow-xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <Wifi className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Port {systemInfo?.port || 3002} (LAN)</span>
-              <span className="md:hidden">LAN</span>
-            </div>
-            <div className="hidden lg:flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-600 rounded-full text-xs font-medium">
-              <ShieldCheck className="w-3.5 h-3.5 text-indigo-500" />
-              <span>{systemInfo?.database?.type || 'SQLite'}</span>
-            </div>
+            {currentUser && (
+              <div className="hidden sm:flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 bg-slate-100 border border-slate-200/80 rounded-full text-xs">
+                <User className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="font-semibold text-slate-700 max-w-[100px] truncate">{currentUser.name}</span>
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase ${
+                    isAdmin
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  {isAdmin ? 'Admin' : 'User'}
+                </span>
+                <button
+                  onClick={onLogout}
+                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded-full transition"
+                  title="Sign Out"
+                  aria-label="Sign Out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

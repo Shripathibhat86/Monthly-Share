@@ -50,9 +50,9 @@ export function AddExpenseView({
   const [date, setDate] = useState(getCurrentDateISO());
   const [category, setCategory] = useState('Groceries');
   const [amount, setAmount] = useState('');
-  const [paidBy, setPaidBy] = useState(members[0]?.id || 1);
+  const [paidBy, setPaidBy] = useState(members[0]?.id || '');
   const [splitMethod, setSplitMethod] = useState('equal'); // 'equal', 'custom', 'percentage', 'weighted'
-  const [selectedParticipants, setSelectedParticipants] = useState([1, 2, 3]); // User1, 2, 3 by default, User4 excluded initially
+  const [selectedParticipants, setSelectedParticipants] = useState(members.map((m) => m.id));
   const [customShares, setCustomShares] = useState({}); // { [memberId]: amount }
   const [percentageShares, setPercentageShares] = useState({}); // { [memberId]: percentage }
   const [weightedShares, setWeightedShares] = useState({}); // { [memberId]: weight }
@@ -107,9 +107,13 @@ export function AddExpenseView({
       } else {
         setDate(`${selectedMonth}-01`);
       }
-      // User1, User2, User3 selected by default. User4 not selected (occasional).
-      const regMembers = members.filter(m => m.role !== 'occasional').map(m => m.id);
-      setSelectedParticipants(regMembers.length > 0 ? regMembers : [1, 2, 3]);
+      if (members.length > 0) {
+        if (!members.some((m) => Number(m.id) === Number(paidBy))) {
+          setPaidBy(members[0].id);
+        }
+        const regMembers = members.filter((m) => m.role !== 'occasional').map((m) => m.id);
+        setSelectedParticipants(regMembers.length > 0 ? regMembers : members.map((m) => m.id));
+      }
     }
   }, [editingExpense, members, selectedMonth]);
 
@@ -489,24 +493,26 @@ export function AddExpenseView({
                   Participating Members *
                 </label>
                 <p className="text-[11px] text-slate-500">
-                  Only selected members will share this cost. Vatsa is optional.
+                  Only selected members will share this cost.
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={selectRegularOnly}
-                  className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
-                >
-                  Regular Only (3 Members)
-                </button>
+                {members.some((m) => m.role === 'occasional') && (
+                  <button
+                    type="button"
+                    onClick={selectRegularOnly}
+                    className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
+                  >
+                    Regular Only ({members.filter((m) => m.role !== 'occasional').length})
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={selectAll}
                   className="px-2.5 py-1 text-[11px] font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition"
                 >
-                  All 4 Members
+                  All Members ({members.length})
                 </button>
               </div>
             </div>

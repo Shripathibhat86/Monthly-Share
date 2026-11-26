@@ -4,7 +4,6 @@ import { getMonthSettlementSummary } from '../settlementEngine.js';
 
 const router = Router();
 
-// Helper to get previous month string 'YYYY-MM'
 function getPreviousMonth(monthStr) {
   const [year, month] = monthStr.split('-').map(Number);
   if (month === 1) {
@@ -14,7 +13,7 @@ function getPreviousMonth(monthStr) {
   return `${year}-${prevMonth < 10 ? '0' : ''}${prevMonth}`;
 }
 
-// GET monthly detailed report + Month-over-Month comparison
+// GET monthly detailed report + Month-over-Month comparison (scoped to signed-in user)
 router.get('/monthly', async (req, res) => {
   try {
     const { month } = req.query;
@@ -22,19 +21,18 @@ router.get('/monthly', async (req, res) => {
       return res.status(400).json({ error: 'Valid month (YYYY-MM) is required' });
     }
 
-    const currentSummary = await getMonthSettlementSummary(month);
+    const currentSummary = await getMonthSettlementSummary(month, req.user.id);
 
-    // Category breakdown for current month
     const categoryRes = await query(
       `SELECT category, SUM(amount) as total, COUNT(*) as count 
        FROM expenses 
-       WHERE date LIKE ? 
+       WHERE date LIKE ? AND user_id = ?
        GROUP BY category 
        ORDER BY total DESC`,
-      [`${month}-%`]
+      [`${month}-%`, req.user.id]
     );
 
-    const categories = categoryRes.rows.map(c => ({
+    const categories = categoryRes.rows.map((c) => ({
       category: c.category,
       total: Number(c.total),
       count: Number(c.count),
@@ -43,9 +41,8 @@ router.get('/monthly', async (req, res) => {
         : 0
     }));
 
-    // Previous month comparison
     const prevMonth = getPreviousMonth(month);
-    const prevSummary = await getMonthSettlementSummary(prevMonth);
+    const prevSummary = await getMonthSettlementSummary(prevMonth, req.user.id);
 
     const momDiff = currentSummary.totalExpenses - prevSummary.totalExpenses;
     const momPercent = prevSummary.totalExpenses > 0
@@ -69,24 +66,26 @@ router.get('/monthly', async (req, res) => {
   }
 });
 
-// GET yearly report
+// GET yearly report (scoped to signed-in user)
 router.get('/yearly', async (req, res) => {
   try {
     const year = req.query.year || new Date().getFullYear().toString();
 
-    // 12 months array
     const months = Array.from({ length: 12 }, (_, i) => {
       const m = i + 1;
       return `${year}-${m < 10 ? '0' : ''}${m}`;
     });
 
-    const membersRes = await query('SELECT id, name, role FROM members ORDER BY id ASC');
+    const membersRes = await query(
+      'SELECT id, name, role FROM members WHERE user_id = ? ORDER BY id ASC',
+      [req.user.id]
+    );
     const members = membersRes.rows;
 
     const monthlyTrends = [];
 
     for (const m of months) {
-      const sum = await getMonthSettlementSummary(m);
+      const sum = await getMonthSettlementSummary(m, req.user.id);
       const memberShares = {};
       const memberPaid = {};
       for (const mb of sum.memberSummary) {
@@ -104,14 +103,13 @@ router.get('/yearly', async (req, res) => {
       });
     }
 
-    // Yearly total & category breakdown
     const yearlyCatRes = await query(
       `SELECT category, SUM(amount) as total, COUNT(*) as count 
        FROM expenses 
-       WHERE date LIKE ? 
+       WHERE date LIKE ? AND user_id = ?
        GROUP BY category 
        ORDER BY total DESC`,
-      [`${year}-%`]
+      [`${year}-%`, req.user.id]
     );
 
     const totalYearlyExpenses = monthlyTrends.reduce((s, m) => s + m.totalExpenses, 0);
@@ -120,7 +118,7 @@ router.get('/yearly', async (req, res) => {
       year,
       totalYearlyExpenses: Number(totalYearlyExpenses.toFixed(2)),
       monthlyTrends,
-      categories: yearlyCatRes.rows.map(c => ({
+      categories: yearlyCatRes.rows.map((c) => ({
         category: c.category,
         total: Number(c.total),
         count: Number(c.count)
@@ -132,14 +130,17 @@ router.get('/yearly', async (req, res) => {
   }
 });
 
-// GET participation report (focuses on User4 occasional member vs others)
+// GET participation report (scoped to signed-in user)
 router.get('/participation', async (req, res) => {
   try {
     const { month } = req.query;
-    const filterSql = month ? 'WHERE e.date LIKE ?' : '';
-    const params = month ? [`${month}-%`] : [];
+    const filterSql = month ? 'WHERE e.user_id = ? AND e.date LIKE ?' : 'WHERE e.user_id = ?';
+    const params = month ? [req.user.id, `${month}-%`] : [req.user.id];
 
-    const membersRes = await query('SELECT id, name, role FROM members ORDER BY id ASC');
+    const membersRes = await query(
+      'SELECT id, name, role FROM members WHERE user_id = ? ORDER BY id ASC',
+      [req.user.id]
+    );
     const members = membersRes.rows;
 
     const expensesRes = await query(
@@ -153,7 +154,6 @@ router.get('/participation', async (req, res) => {
     const expenses = expensesRes.rows;
     const totalExpensesCount = expenses.length;
 
-    // Fetch all participants
     const partsRes = await query(
       `SELECT ep.expense_id, ep.member_id, ep.allocated_amount 
        FROM expense_participants ep 
@@ -164,20 +164,20 @@ router.get('/participation', async (req, res) => {
     const participants = partsRes.rows;
 
     const report = members.map((member) => {
-      const participatedExpenses = expenses.filter(e =>
-        participants.some(p => p.expense_id === e.id && p.member_id === member.id)
+      const participatedExpenses = expenses.filter((e) =>
+        participants.some((p) => p.expense_id === e.id && Number(p.member_id) === Number(member.id))
       );
 
-      const skippedExpenses = expenses.filter(e =>
-        !participants.some(p => p.expense_id === e.id && p.member_id === member.id)
+      const skippedExpenses = expenses.filter((e) =>
+        !participants.some((p) => p.expense_id === e.id && Number(p.member_id) === Number(member.id))
       );
 
       const totalAllocated = participants
-        .filter(p => p.member_id === member.id)
+        .filter((p) => Number(p.member_id) === Number(member.id))
         .reduce((sum, p) => sum + Number(p.allocated_amount), 0);
 
       const totalPaid = expenses
-        .filter(e => e.paid_by_member_id === member.id)
+        .filter((e) => Number(e.paid_by_member_id) === Number(member.id))
         .reduce((sum, e) => sum + Number(e.amount), 0);
 
       const participationRate = totalExpensesCount > 0
@@ -193,7 +193,7 @@ router.get('/participation', async (req, res) => {
         participationRate,
         totalAllocated: Number(totalAllocated.toFixed(2)),
         totalPaid: Number(totalPaid.toFixed(2)),
-        participatedExpenses: participatedExpenses.map(e => ({
+        participatedExpenses: participatedExpenses.map((e) => ({
           id: e.id,
           title: e.title,
           date: e.date,

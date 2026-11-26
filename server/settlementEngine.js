@@ -397,21 +397,25 @@ export function solveMinCashFlow(memberBalances, allExpenses = [], allParticipan
 
 /**
  * Calculates complete balances, settlements, and engine recommendations for a month (YYYY-MM)
+ * scoped to a specific user workspace (userId).
  */
-export async function getMonthSettlementSummary(month) {
-  // 1. Get all members
-  const membersRes = await query('SELECT id, name, role, upi_id FROM members ORDER BY id ASC');
+export async function getMonthSettlementSummary(month, userId) {
+  // 1. Get all members belonging to this user
+  const membersRes = await query(
+    'SELECT id, name, role, upi_id FROM members WHERE user_id = ? ORDER BY id ASC',
+    [Number(userId)]
+  );
   const members = membersRes.rows;
 
-  // 2. Get all expenses for this month with payer details
+  // 2. Get all expenses for this month with payer details belonging to this user
   const expensesRes = await query(
     `SELECT e.id, e.title, e.date, e.category, e.amount, e.paid_by_member_id, e.split_method,
             m.name as payer_name
      FROM expenses e
      JOIN members m ON e.paid_by_member_id = m.id
-     WHERE e.date LIKE ?
+     WHERE e.date LIKE ? AND e.user_id = ?
      ORDER BY e.date ASC, e.id ASC`,
-    [`${month}-%`]
+    [`${month}-%`, Number(userId)]
   );
   const expenses = expensesRes.rows.map((e) => ({
     ...e,
@@ -424,24 +428,24 @@ export async function getMonthSettlementSummary(month) {
      FROM expense_participants ep 
      JOIN expenses e ON ep.expense_id = e.id 
      JOIN members m ON ep.member_id = m.id
-     WHERE e.date LIKE ?`,
-    [`${month}-%`]
+     WHERE e.date LIKE ? AND e.user_id = ?`,
+    [`${month}-%`, Number(userId)]
   );
   const participants = participantsRes.rows.map((p) => ({
     ...p,
     allocated_amount: Number(p.allocated_amount)
   }));
 
-  // 4. Get all recorded settlements for this month
+  // 4. Get all recorded settlements for this month belonging to this user
   const settlementsRes = await query(
     `SELECT s.id, s.month, s.payer_member_id, s.receiver_member_id, s.amount, s.status, s.payment_date, s.reference_note, s.created_at, s.completed_at,
             mp.name as payer_name, mr.name as receiver_name, mr.upi_id as receiver_upi_id
      FROM settlements s
      JOIN members mp ON s.payer_member_id = mp.id
      JOIN members mr ON s.receiver_member_id = mr.id
-     WHERE s.month = ?
+     WHERE s.month = ? AND s.user_id = ?
      ORDER BY s.id ASC`,
-    [month]
+    [month, Number(userId)]
   );
   const allSettlements = settlementsRes.rows.map((s) => ({
     ...s,

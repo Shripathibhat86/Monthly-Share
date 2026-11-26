@@ -111,8 +111,9 @@ export function ParticipationReportsView({
   const currentSummary = monthlyReport?.currentSummary || {};
   const categories = monthlyReport?.categories || [];
   const mom = monthlyReport?.momComparison || {};
-  const occasionalMember = participationData?.members?.find((m) => m.role === 'occasional');
-  const occasionalName = occasionalMember?.name || 'Vatsa';
+  const occasionalMember = participationData?.members?.find((m) => m.role === 'occasional')
+    || monthlyReport?.currentSummary?.memberSummary?.find((m) => m.role === 'occasional');
+  const occasionalName = occasionalMember?.name || 'Member';
 
   return (
     <div className="space-y-6">

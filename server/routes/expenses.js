@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../db.js';
+import { verifyMemberPinOrPassword } from '../auth.js';
 import {
   calculateEqualSplit,
   calculatePercentageSplit,
@@ -23,7 +24,21 @@ function normalizeDate(d) {
   return d;
 }
 
-// GET all expenses with filtering & sorting
+async function getOwnedMemberIds(userId) {
+  const res = await query('SELECT id FROM members WHERE user_id = ?', [userId]);
+  return new Set(res.rows.map((r) => Number(r.id)));
+}
+
+function validateAllocationsBelongToUser(allocations, ownedIds) {
+  for (const alloc of allocations) {
+    if (!ownedIds.has(Number(alloc.member_id))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// GET all expenses with filtering & sorting (scoped to signed-in user)
 router.get('/', async (req, res) => {
   try {
     const { month, category, payerId, participantId, search, sortBy = 'date', sortOrder = 'desc' } = req.query;
@@ -35,9 +50,9 @@ router.get('/', async (req, res) => {
              m.name as payer_name
       FROM expenses e
       JOIN members m ON e.paid_by_member_id = m.id
-      WHERE 1=1
+      WHERE e.user_id = ?
     `;
-    const params = [];
+    const params = [req.user.id];
 
     if (month) {
       sql += ' AND e.date LIKE ?';
@@ -60,7 +75,7 @@ router.get('/', async (req, res) => {
     }
 
     if (participantId) {
-      sql += ` AND e.id IN (SELECT expense_id FROM expense_participants WHERE member_id = ?)`;
+      sql += ' AND e.id IN (SELECT expense_id FROM expense_participants WHERE member_id = ?)';
       params.push(Number(participantId));
     }
 
@@ -78,7 +93,7 @@ router.get('/', async (req, res) => {
     }
 
     // Fetch participants for these expenses
-    const expenseIds = expenses.map(e => e.id);
+    const expenseIds = expenses.map((e) => e.id);
     const placeholders = expenseIds.map(() => '?').join(',');
     const partSql = `
       SELECT ep.expense_id, ep.member_id, ep.allocated_amount, ep.split_value, m.name as member_name
@@ -90,15 +105,17 @@ router.get('/', async (req, res) => {
     const allParticipants = participantsRes.rows;
 
     // Attach participants to each expense
-    const result = expenses.map(e => ({
+    const result = expenses.map((e) => ({
       ...e,
       amount: Number(e.amount),
-      participants: allParticipants.filter(p => p.expense_id === e.id).map(p => ({
-        member_id: p.member_id,
-        member_name: p.member_name,
-        allocated_amount: Number(p.allocated_amount),
-        split_value: p.split_value != null ? Number(p.split_value) : null
-      }))
+      participants: allParticipants
+        .filter((p) => Number(p.expense_id) === Number(e.id))
+        .map((p) => ({
+          member_id: p.member_id,
+          member_name: p.member_name,
+          allocated_amount: Number(p.allocated_amount),
+          split_value: p.split_value != null ? Number(p.split_value) : null
+        }))
     }));
 
     res.json(result);
@@ -107,7 +124,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET single expense by ID (includes receipt data)
+// GET single expense by ID (scoped to signed-in user)
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -115,8 +132,8 @@ router.get('/:id', async (req, res) => {
       `SELECT e.*, m.name as payer_name 
        FROM expenses e 
        JOIN members m ON e.paid_by_member_id = m.id 
-       WHERE e.id = ?`,
-      [id]
+       WHERE e.id = ? AND e.user_id = ?`,
+      [Number(id), req.user.id]
     );
 
     if (expRes.rows.length === 0) {
@@ -131,10 +148,10 @@ router.get('/:id', async (req, res) => {
        FROM expense_participants ep 
        JOIN members m ON ep.member_id = m.id 
        WHERE ep.expense_id = ?`,
-      [id]
+      [Number(id)]
     );
 
-    expense.participants = partRes.rows.map(p => ({
+    expense.participants = partRes.rows.map((p) => ({
       ...p,
       allocated_amount: Number(p.allocated_amount),
       split_value: p.split_value != null ? Number(p.split_value) : null
@@ -146,22 +163,22 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// GET raw receipt attachment for an expense (image or PDF)
+// GET raw receipt attachment for an expense (scoped to signed-in user)
 router.get('/:id/receipt', async (req, res) => {
   try {
     const { id } = req.params;
     const { download } = req.query;
 
     const expRes = await query(
-      `SELECT receipt_data, receipt_filename, title FROM expenses WHERE id = ?`,
-      [id]
+      'SELECT receipt_data, receipt_filename FROM expenses WHERE id = ? AND user_id = ?',
+      [Number(id), req.user.id]
     );
 
     if (expRes.rows.length === 0) {
       return res.status(404).send('Expense not found');
     }
 
-    const { receipt_data, receipt_filename, title } = expRes.rows[0];
+    const { receipt_data, receipt_filename } = expRes.rows[0];
 
     if (!receipt_data) {
       return res.status(404).send('No receipt attached to this expense');
@@ -177,7 +194,7 @@ router.get('/:id/receipt', async (req, res) => {
       res.setHeader('Content-Type', contentType);
       const disposition = download ? 'attachment' : 'inline';
       res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(safeFilename)}"`);
-      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('Cache-Control', 'private, max-age=86400');
       return res.send(buffer);
     }
 
@@ -192,7 +209,7 @@ router.get('/:id/receipt', async (req, res) => {
   }
 });
 
-// POST create expense (Protected with Password / PIN)
+// POST create expense (Auth + PIN/Password protected, scoped to signed-in user)
 router.post('/', async (req, res) => {
   try {
     const {
@@ -202,7 +219,7 @@ router.post('/', async (req, res) => {
       amount,
       paid_by_member_id,
       split_method,
-      participants, // Array of member IDs or objects { member_id, percentage/weight/amount }
+      participants,
       notes,
       receipt_data,
       receipt_filename,
@@ -218,8 +235,8 @@ router.post('/', async (req, res) => {
       return res.status(401).json({ error: 'Password / PIN authorization is required to record an expense' });
     }
 
-    const pinRes = await query('SELECT pin FROM members WHERE id = ?', [checkMemberId]);
-    if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== checkPin.toString().trim()) {
+    const pinCheck = await verifyMemberPinOrPassword(req.user.id, checkMemberId, checkPin);
+    if (!pinCheck.verified) {
       return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
@@ -236,13 +253,18 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Paid By member is required' });
     }
 
+    const ownedIds = await getOwnedMemberIds(req.user.id);
+    if (!ownedIds.has(Number(paid_by_member_id))) {
+      return res.status(403).json({ error: 'Selected payer does not belong to your account' });
+    }
+
     const formattedDate = normalizeDate(date);
 
     // Calculate participant allocations
     let allocations = [];
     if (split_method === 'equal') {
       const pIds = Array.isArray(participants)
-        ? participants.map(p => (typeof p === 'object' ? p.member_id : p))
+        ? participants.map((p) => (typeof p === 'object' ? p.member_id : p))
         : [];
       allocations = calculateEqualSplit(numAmount, pIds, Number(paid_by_member_id));
     } else if (split_method === 'custom') {
@@ -255,7 +277,10 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: `Invalid split method: ${split_method}` });
     }
 
-    // Verify sum matches amount to 2 decimal places
+    if (!validateAllocationsBelongToUser(allocations, ownedIds)) {
+      return res.status(403).json({ error: 'One or more participants do not belong to your account' });
+    }
+
     const sumAllocated = allocations.reduce((s, a) => s + a.allocated_amount, 0);
     if (Math.abs(sumAllocated - numAmount) > 0.01) {
       return res.status(400).json({
@@ -263,12 +288,12 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // Insert into expenses
     const insertExp = await query(
       `INSERT INTO expenses 
-       (title, date, category, amount, paid_by_member_id, split_method, notes, receipt_data, receipt_filename)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (user_id, title, date, category, amount, paid_by_member_id, split_method, notes, receipt_data, receipt_filename)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [
+        req.user.id,
         title.trim(),
         formattedDate,
         category || 'Other',
@@ -281,14 +306,8 @@ router.post('/', async (req, res) => {
       ]
     );
 
-    // In SQLite or Postgres, fetch inserted ID
-    let expenseId = insertExp.lastInsertRowid;
-    if (!expenseId) {
-      const lastExp = await query('SELECT MAX(id) as id FROM expenses');
-      expenseId = lastExp.rows[0].id;
-    }
+    const expenseId = insertExp.lastInsertRowid;
 
-    // Insert participants
     for (const alloc of allocations) {
       await query(
         `INSERT INTO expense_participants (expense_id, member_id, allocated_amount, split_value)
@@ -307,7 +326,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// POST batch import expenses (from Excel / CSV)
+// POST batch import expenses (scoped to signed-in user)
 router.post('/import', async (req, res) => {
   try {
     const {
@@ -322,8 +341,8 @@ router.post('/import', async (req, res) => {
       return res.status(401).json({ error: 'Password / PIN authorization is required to import expenses' });
     }
 
-    const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
-    if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== checkPin.toString().trim()) {
+    const pinCheck = await verifyMemberPinOrPassword(req.user.id, authorizing_member_id, checkPin);
+    if (!pinCheck.verified) {
       return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
@@ -331,9 +350,10 @@ router.post('/import', async (req, res) => {
       return res.status(400).json({ error: 'No expenses provided in import list' });
     }
 
-    const membersRes = await query('SELECT id, name FROM members');
+    const membersRes = await query('SELECT id, name FROM members WHERE user_id = ?', [req.user.id]);
     const allMembers = membersRes.rows;
-    const allMemberIds = allMembers.map(m => m.id);
+    const allMemberIds = allMembers.map((m) => Number(m.id));
+    const ownedIds = new Set(allMemberIds);
 
     let importedCount = 0;
     const insertedIds = [];
@@ -353,35 +373,37 @@ router.post('/import', async (req, res) => {
       if (!title || !title.trim()) continue;
       const numAmount = Number(amount);
       if (isNaN(numAmount) || numAmount <= 0) continue;
-      if (!paid_by_member_id) continue;
+      if (!paid_by_member_id || !ownedIds.has(Number(paid_by_member_id))) continue;
 
       const payerId = Number(paid_by_member_id);
       const formattedDate = normalizeDate(date);
 
-      // Determine participant IDs
       let pIds = Array.isArray(participants) && participants.length > 0
-        ? participants.map(p => Number(typeof p === 'object' ? p.member_id : p)).filter(id => !isNaN(id))
+        ? participants
+            .map((p) => Number(typeof p === 'object' ? p.member_id : p))
+            .filter((id) => !isNaN(id) && ownedIds.has(id))
         : allMemberIds;
 
       if (pIds.length === 0) {
         pIds = allMemberIds;
       }
 
-      // Calculate allocations
       let allocations = [];
       if (split_method === 'equal') {
         allocations = calculateEqualSplit(numAmount, pIds, payerId);
       } else if (split_method === 'custom' && Array.isArray(participants) && typeof participants[0] === 'object') {
-        allocations = validateCustomSplit(numAmount, participants);
+        const filteredCustom = participants.filter((p) => ownedIds.has(Number(p.member_id)));
+        allocations = validateCustomSplit(numAmount, filteredCustom);
       } else {
         allocations = calculateEqualSplit(numAmount, pIds, payerId);
       }
 
       const insertExp = await query(
         `INSERT INTO expenses 
-         (title, date, category, amount, paid_by_member_id, split_method, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (user_id, title, date, category, amount, paid_by_member_id, split_method, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [
+          req.user.id,
           title.trim(),
           formattedDate,
           category || 'Other',
@@ -392,12 +414,7 @@ router.post('/import', async (req, res) => {
         ]
       );
 
-      let expenseId = insertExp.lastInsertRowid;
-      if (!expenseId || isNaN(expenseId)) {
-        const lastExp = await query('SELECT MAX(id) as id FROM expenses');
-        expenseId = lastExp.rows[0]?.id;
-      }
-
+      const expenseId = insertExp.lastInsertRowid;
       if (expenseId) {
         insertedIds.push(expenseId);
         for (const alloc of allocations) {
@@ -422,10 +439,15 @@ router.post('/import', async (req, res) => {
   }
 });
 
-// PUT update expense (PIN protected)
+// PUT update expense (scoped to signed-in user)
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const existingExp = await query('SELECT id FROM expenses WHERE id = ? AND user_id = ?', [Number(id), req.user.id]);
+    if (existingExp.rows.length === 0) {
+      return res.status(404).json({ error: 'Expense not found' });
+    }
+
     const {
       title,
       date,
@@ -450,8 +472,8 @@ router.put('/:id', async (req, res) => {
       return res.status(401).json({ error: 'Password / PIN authorization is required to edit an expense' });
     }
 
-    const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [checkMemberId]);
-    if (pinCheck.rows.length === 0 || pinCheck.rows[0].pin.trim() !== checkPin.toString().trim()) {
+    const pinCheck = await verifyMemberPinOrPassword(req.user.id, checkMemberId, checkPin);
+    if (!pinCheck.verified) {
       return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
@@ -460,13 +482,17 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Valid expense amount is required' });
     }
 
+    const ownedIds = await getOwnedMemberIds(req.user.id);
+    if (!ownedIds.has(Number(paid_by_member_id))) {
+      return res.status(403).json({ error: 'Selected payer does not belong to your account' });
+    }
+
     const formattedDate = normalizeDate(date);
 
-    // Calculate participant allocations
     let allocations = [];
     if (split_method === 'equal') {
       const pIds = Array.isArray(participants)
-        ? participants.map(p => (typeof p === 'object' ? p.member_id : p))
+        ? participants.map((p) => (typeof p === 'object' ? p.member_id : p))
         : [];
       allocations = calculateEqualSplit(numAmount, pIds, Number(paid_by_member_id));
     } else if (split_method === 'custom') {
@@ -479,13 +505,16 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: `Invalid split method: ${split_method}` });
     }
 
-    // Update expense record
+    if (!validateAllocationsBelongToUser(allocations, ownedIds)) {
+      return res.status(403).json({ error: 'One or more participants do not belong to your account' });
+    }
+
     if (receipt_data !== undefined) {
       await query(
         `UPDATE expenses 
          SET title = ?, date = ?, category = ?, amount = ?, paid_by_member_id = ?, 
              split_method = ?, notes = ?, receipt_data = ?, receipt_filename = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
+         WHERE id = ? AND user_id = ?`,
         [
           title.trim(),
           formattedDate,
@@ -496,7 +525,8 @@ router.put('/:id', async (req, res) => {
           notes || null,
           receipt_data,
           receipt_filename,
-          id
+          Number(id),
+          req.user.id
         ]
       );
     } else {
@@ -504,18 +534,17 @@ router.put('/:id', async (req, res) => {
         `UPDATE expenses 
          SET title = ?, date = ?, category = ?, amount = ?, paid_by_member_id = ?, 
              split_method = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [title.trim(), formattedDate, category, numAmount, Number(paid_by_member_id), split_method, notes || null, id]
+         WHERE id = ? AND user_id = ?`,
+        [title.trim(), formattedDate, category, numAmount, Number(paid_by_member_id), split_method, notes || null, Number(id), req.user.id]
       );
     }
 
-    // Replace participants
-    await query('DELETE FROM expense_participants WHERE expense_id = ?', [id]);
+    await query('DELETE FROM expense_participants WHERE expense_id = ?', [Number(id)]);
     for (const alloc of allocations) {
       await query(
         `INSERT INTO expense_participants (expense_id, member_id, allocated_amount, split_value)
          VALUES (?, ?, ?, ?)`,
-        [id, alloc.member_id, alloc.allocated_amount, alloc.split_value]
+        [Number(id), alloc.member_id, alloc.allocated_amount, alloc.split_value]
       );
     }
 
@@ -525,7 +554,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Handler for deleting all or scoped expenses (PIN protected)
+// Handler for deleting all or scoped expenses (strictly scoped to signed-in user)
 async function handleDeleteAll(req, res) {
   try {
     const {
@@ -533,7 +562,7 @@ async function handleDeleteAll(req, res) {
       memberId,
       authorizing_pin,
       authorizing_member_id,
-      scope = 'month', // 'month', 'all', or 'filtered'
+      scope = 'month',
       month,
       expenseIds
     } = req.body;
@@ -545,28 +574,8 @@ async function handleDeleteAll(req, res) {
       return res.status(401).json({ error: 'Password / PIN authorization is required to delete expenses' });
     }
 
-    const cleanPin = checkPin.toString().trim();
-
-    // Verify PIN against specific member or any member
-    let verified = false;
-    let authorizedMember = null;
-
-    if (checkMemberId && checkMemberId !== 'any' && Number(checkMemberId) > 0) {
-      const pinCheck = await query('SELECT id, name, pin FROM members WHERE id = ?', [Number(checkMemberId)]);
-      if (pinCheck.rows.length > 0 && pinCheck.rows[0].pin.trim() === cleanPin) {
-        verified = true;
-        authorizedMember = pinCheck.rows[0];
-      }
-    } else {
-      const allMembers = await query('SELECT id, name, pin FROM members');
-      const matched = allMembers.rows.find((m) => m.pin.trim() === cleanPin);
-      if (matched) {
-        verified = true;
-        authorizedMember = matched;
-      }
-    }
-
-    if (!verified) {
+    const pinCheck = await verifyMemberPinOrPassword(req.user.id, checkMemberId || 'any', checkPin);
+    if (!pinCheck.verified) {
       return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
@@ -576,25 +585,46 @@ async function handleDeleteAll(req, res) {
       const validIds = expenseIds.map(Number).filter((n) => !isNaN(n) && n > 0);
       if (validIds.length > 0) {
         const placeholders = validIds.map(() => '?').join(',');
-        await query(`DELETE FROM expense_participants WHERE expense_id IN (${placeholders})`, validIds);
-        const delRes = await query(`DELETE FROM expenses WHERE id IN (${placeholders})`, validIds);
-        deletedCount = delRes.changes || validIds.length;
+        const ownedRes = await query(
+          `SELECT id FROM expenses WHERE user_id = ? AND id IN (${placeholders})`,
+          [req.user.id, ...validIds]
+        );
+        const ownedExpIds = ownedRes.rows.map((r) => Number(r.id));
+        if (ownedExpIds.length > 0) {
+          const ownedPh = ownedExpIds.map(() => '?').join(',');
+          await query(`DELETE FROM expense_participants WHERE expense_id IN (${ownedPh})`, ownedExpIds);
+          const delRes = await query(
+            `DELETE FROM expenses WHERE user_id = ? AND id IN (${ownedPh})`,
+            [req.user.id, ...ownedExpIds]
+          );
+          deletedCount = delRes.changes || ownedExpIds.length;
+        }
       }
     } else if (scope === 'all') {
-      const allExp = await query('SELECT id FROM expenses');
+      const allExp = await query('SELECT id FROM expenses WHERE user_id = ?', [req.user.id]);
       deletedCount = allExp.rows.length;
-      await query('DELETE FROM expense_participants');
-      await query('DELETE FROM expenses');
+      if (deletedCount > 0) {
+        await query(
+          'DELETE FROM expense_participants WHERE expense_id IN (SELECT id FROM expenses WHERE user_id = ?)',
+          [req.user.id]
+        );
+        await query('DELETE FROM expenses WHERE user_id = ?', [req.user.id]);
+      }
     } else {
-      // Default: scoped to month
       const targetMonth = month || new Date().toISOString().slice(0, 7);
-      const monthExp = await query('SELECT id FROM expenses WHERE date LIKE ?', [`${targetMonth}-%`]);
+      const monthExp = await query(
+        'SELECT id FROM expenses WHERE user_id = ? AND date LIKE ?',
+        [req.user.id, `${targetMonth}-%`]
+      );
       deletedCount = monthExp.rows.length;
-      const ids = monthExp.rows.map((r) => r.id);
+      const ids = monthExp.rows.map((r) => Number(r.id));
       if (ids.length > 0) {
         const placeholders = ids.map(() => '?').join(',');
         await query(`DELETE FROM expense_participants WHERE expense_id IN (${placeholders})`, ids);
-        await query(`DELETE FROM expenses WHERE id IN (${placeholders})`, ids);
+        await query(
+          `DELETE FROM expenses WHERE user_id = ? AND id IN (${placeholders})`,
+          [req.user.id, ...ids]
+        );
       }
     }
 
@@ -602,23 +632,27 @@ async function handleDeleteAll(req, res) {
       success: true,
       message: `Successfully deleted ${deletedCount} expense record${deletedCount === 1 ? '' : 's'}`,
       deletedCount,
-      authorizedBy: authorizedMember?.name
+      authorizedBy: pinCheck.member?.name
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 }
 
-// DELETE all or scoped expenses (mounted before /:id)
 router.delete('/all', handleDeleteAll);
 router.delete('/', handleDeleteAll);
 
-// DELETE single expense (PIN protected)
+// DELETE single expense (scoped to signed-in user)
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (id === 'all') {
       return handleDeleteAll(req, res);
+    }
+
+    const expCheck = await query('SELECT id FROM expenses WHERE id = ? AND user_id = ?', [Number(id), req.user.id]);
+    if (expCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Expense not found' });
     }
 
     const { pin, memberId, authorizing_pin, authorizing_member_id } = req.body;
@@ -629,27 +663,13 @@ router.delete('/:id', async (req, res) => {
       return res.status(401).json({ error: 'Password / PIN authorization is required to delete an expense' });
     }
 
-    const cleanPin = checkPin.toString().trim();
-    let verified = false;
-
-    if (checkMemberId && checkMemberId !== 'any' && Number(checkMemberId) > 0) {
-      const pinCheck = await query('SELECT pin FROM members WHERE id = ?', [Number(checkMemberId)]);
-      if (pinCheck.rows.length > 0 && pinCheck.rows[0].pin.trim() === cleanPin) {
-        verified = true;
-      }
-    } else {
-      const allMembers = await query('SELECT pin FROM members');
-      if (allMembers.rows.some((m) => m.pin.trim() === cleanPin)) {
-        verified = true;
-      }
-    }
-
-    if (!verified) {
+    const pinCheck = await verifyMemberPinOrPassword(req.user.id, checkMemberId || 'any', checkPin);
+    if (!pinCheck.verified) {
       return res.status(401).json({ error: 'Incorrect authorization password / PIN' });
     }
 
-    await query('DELETE FROM expense_participants WHERE expense_id = ?', [id]);
-    await query('DELETE FROM expenses WHERE id = ?', [id]);
+    await query('DELETE FROM expense_participants WHERE expense_id = ?', [Number(id)]);
+    await query('DELETE FROM expenses WHERE id = ? AND user_id = ?', [Number(id), req.user.id]);
 
     res.json({ success: true, message: 'Expense deleted successfully' });
   } catch (err) {

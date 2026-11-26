@@ -1,20 +1,41 @@
 import { Router } from 'express';
-import { query, isPg, sqliteDb } from '../db.js';
+import { query } from '../db.js';
+import { verifyMemberPinOrPassword } from '../auth.js';
 
 const router = Router();
 
-// GET export complete database backup as JSON
+// GET export signed-in user's isolated backup as JSON
 router.get('/export', async (req, res) => {
   try {
-    const membersRes = await query('SELECT * FROM members ORDER BY id ASC');
-    const expensesRes = await query('SELECT * FROM expenses ORDER BY id ASC');
-    const participantsRes = await query('SELECT * FROM expense_participants ORDER BY id ASC');
-    const settlementsRes = await query('SELECT * FROM settlements ORDER BY id ASC');
+    const membersRes = await query(
+      'SELECT id, name, role, pin, upi_id, created_at FROM members WHERE user_id = ? ORDER BY id ASC',
+      [req.user.id]
+    );
+    const expensesRes = await query(
+      'SELECT id, title, date, category, amount, paid_by_member_id, split_method, notes, receipt_data, receipt_filename, created_at, updated_at FROM expenses WHERE user_id = ? ORDER BY id ASC',
+      [req.user.id]
+    );
+    const participantsRes = await query(
+      `SELECT ep.id, ep.expense_id, ep.member_id, ep.allocated_amount, ep.split_value
+       FROM expense_participants ep
+       JOIN expenses e ON ep.expense_id = e.id
+       WHERE e.user_id = ?
+       ORDER BY ep.id ASC`,
+      [req.user.id]
+    );
+    const settlementsRes = await query(
+      'SELECT id, month, payer_member_id, receiver_member_id, amount, status, payment_date, reference_note, created_at, completed_at FROM settlements WHERE user_id = ? ORDER BY id ASC',
+      [req.user.id]
+    );
 
     const backupData = {
       app: 'Monthly Shared Expense Manager',
-      version: '1.0',
+      version: '2.0',
       exported_at: new Date().toISOString(),
+      account: {
+        name: req.user.name,
+        email: req.user.email
+      },
       data: {
         members: membersRes.rows,
         expenses: expensesRes.rows,
@@ -31,7 +52,7 @@ router.get('/export', async (req, res) => {
   }
 });
 
-// POST restore database from backup JSON (PIN protected)
+// POST restore user's own workspace from backup JSON (never touches other accounts!)
 router.post('/restore', async (req, res) => {
   try {
     const { backupData, pin, authorizing_member_id } = req.body;
@@ -40,93 +61,134 @@ router.post('/restore', async (req, res) => {
       return res.status(400).json({ error: 'Invalid backup file structure' });
     }
 
-    if (pin && authorizing_member_id) {
-      const pinRes = await query('SELECT pin FROM members WHERE id = ?', [authorizing_member_id]);
-      if (pinRes.rows.length === 0 || pinRes.rows[0].pin.trim() !== pin.toString().trim()) {
-        return res.status(401).json({ error: 'Invalid authorization PIN' });
-      }
+    if (!pin) {
+      return res.status(401).json({ error: 'Password / PIN authorization is required to restore backup' });
+    }
+
+    const pinCheck = await verifyMemberPinOrPassword(req.user.id, authorizing_member_id || 'any', pin);
+    if (!pinCheck.verified) {
+      return res.status(401).json({ error: 'Invalid authorization password / PIN' });
     }
 
     const { members, expenses, expense_participants, settlements } = backupData.data;
 
-    // Clear existing data safely
-    await query('DELETE FROM expense_participants');
-    await query('DELETE FROM expenses');
-    await query('DELETE FROM settlements');
+    // Clear ONLY this signed-in user's existing records
+    await query(
+      'DELETE FROM expense_participants WHERE expense_id IN (SELECT id FROM expenses WHERE user_id = ?)',
+      [req.user.id]
+    );
+    await query('DELETE FROM expenses WHERE user_id = ?', [req.user.id]);
+    await query('DELETE FROM settlements WHERE user_id = ?', [req.user.id]);
 
-    if (members && members.length > 0) {
-      await query('DELETE FROM members');
+    const memberIdMap = new Map();
+
+    if (Array.isArray(members) && members.length > 0) {
+      await query('DELETE FROM members WHERE user_id = ?', [req.user.id]);
       for (const m of members) {
-        await query(
-          'INSERT INTO members (id, name, role, pin, created_at) VALUES (?, ?, ?, ?, ?)',
-          [m.id, m.name, m.role || 'regular', m.pin || '1234', m.created_at || new Date().toISOString()]
+        const inserted = await query(
+          'INSERT INTO members (user_id, name, role, pin, upi_id, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
+          [
+            req.user.id,
+            m.name,
+            m.role || 'regular',
+            m.pin || '1234',
+            m.upi_id || null,
+            m.created_at || new Date().toISOString()
+          ]
         );
+        memberIdMap.set(Number(m.id), inserted.lastInsertRowid);
+      }
+    } else {
+      // Keep existing members mapped to themselves if backup didn't include members
+      const currentMembers = await query('SELECT id FROM members WHERE user_id = ?', [req.user.id]);
+      for (const m of currentMembers.rows) {
+        memberIdMap.set(Number(m.id), Number(m.id));
       }
     }
 
-    if (expenses && expenses.length > 0) {
+    const expenseIdMap = new Map();
+    let restoredExpenses = 0;
+    let restoredParticipants = 0;
+    let restoredSettlements = 0;
+
+    if (Array.isArray(expenses) && expenses.length > 0) {
       for (const e of expenses) {
-        await query(
+        const mappedPayerId = memberIdMap.get(Number(e.paid_by_member_id));
+        if (!mappedPayerId) continue;
+
+        const inserted = await query(
           `INSERT INTO expenses 
-           (id, title, date, category, amount, paid_by_member_id, split_method, notes, receipt_data, receipt_filename, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (user_id, title, date, category, amount, paid_by_member_id, split_method, notes, receipt_data, receipt_filename, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
           [
-            e.id,
+            req.user.id,
             e.title,
             e.date,
             e.category,
             e.amount,
-            e.paid_by_member_id,
+            mappedPayerId,
             e.split_method,
             e.notes,
             e.receipt_data,
             e.receipt_filename,
-            e.created_at,
-            e.updated_at
+            e.created_at || new Date().toISOString(),
+            e.updated_at || new Date().toISOString()
           ]
         );
+        expenseIdMap.set(Number(e.id), inserted.lastInsertRowid);
+        restoredExpenses++;
       }
     }
 
-    if (expense_participants && expense_participants.length > 0) {
+    if (Array.isArray(expense_participants) && expense_participants.length > 0) {
       for (const ep of expense_participants) {
+        const mappedExpId = expenseIdMap.get(Number(ep.expense_id));
+        const mappedMemberId = memberIdMap.get(Number(ep.member_id));
+        if (!mappedExpId || !mappedMemberId) continue;
+
         await query(
-          'INSERT INTO expense_participants (id, expense_id, member_id, allocated_amount, split_value) VALUES (?, ?, ?, ?, ?)',
-          [ep.id, ep.expense_id, ep.member_id, ep.allocated_amount, ep.split_value]
+          'INSERT INTO expense_participants (expense_id, member_id, allocated_amount, split_value) VALUES (?, ?, ?, ?)',
+          [mappedExpId, mappedMemberId, ep.allocated_amount, ep.split_value]
         );
+        restoredParticipants++;
       }
     }
 
-    if (settlements && settlements.length > 0) {
+    if (Array.isArray(settlements) && settlements.length > 0) {
       for (const s of settlements) {
+        const mappedPayer = memberIdMap.get(Number(s.payer_member_id));
+        const mappedReceiver = memberIdMap.get(Number(s.receiver_member_id));
+        if (!mappedPayer || !mappedReceiver) continue;
+
         await query(
           `INSERT INTO settlements 
-           (id, month, payer_member_id, receiver_member_id, amount, status, payment_date, reference_note, created_at, completed_at)
+           (user_id, month, payer_member_id, receiver_member_id, amount, status, payment_date, reference_note, created_at, completed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            s.id,
+            req.user.id,
             s.month,
-            s.payer_member_id,
-            s.receiver_member_id,
+            mappedPayer,
+            mappedReceiver,
             s.amount,
             s.status,
             s.payment_date,
             s.reference_note,
-            s.created_at,
-            s.completed_at
+            s.created_at || new Date().toISOString(),
+            s.completed_at || null
           ]
         );
+        restoredSettlements++;
       }
     }
 
     res.json({
       success: true,
-      message: 'Database backup restored successfully',
+      message: 'Your backup restored successfully',
       restoredRecords: {
-        members: members?.length || 0,
-        expenses: expenses?.length || 0,
-        participants: expense_participants?.length || 0,
-        settlements: settlements?.length || 0
+        members: memberIdMap.size,
+        expenses: restoredExpenses,
+        participants: restoredParticipants,
+        settlements: restoredSettlements
       }
     });
   } catch (err) {
